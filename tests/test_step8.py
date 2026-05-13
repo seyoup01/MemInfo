@@ -234,6 +234,18 @@ def test_selection_view_has_sum_label():
     assert "0" in sv._lbl_sel_sum.text()
 
 
+def test_selection_view_sum_label_has_color_style():
+    """합계 라벨이 배지 형태(배경색 + 흰 글자 + bold)로 강조되어야 한다."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    style = sv._lbl_sel_sum.styleSheet()
+    assert "background-color" in style, f"배경색 미적용: {style}"
+    assert "color: white" in style.replace(" ", "").replace("\n", "") \
+        or "color:white" in style.replace(" ", "").replace("\n", ""), \
+        f"흰 글자 미적용: {style}"
+    assert "bold" in style, f"bold 미적용: {style}"
+
+
 def test_selection_view_sum_updates_on_select_all(sample_snapshot):
     """전체 선택 시 합계가 전체 메모리와 일치하고 콤마 포맷이어야 한다."""
     from ui.selection_view import SelectionView

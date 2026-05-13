@@ -508,13 +508,13 @@ def test_chart_endpoint_label_uses_full_package_name():
     assert label_sysui == "com.android.systemui", f"라벨 텍스트: {label_sysui!r}"
 
 
-def test_chart_endpoint_label_anchored_top_left():
-    """라벨 앵커가 (0, 0) 이어서 데이터 포인트 아래쪽에 텍스트가 렌더링."""
+def test_chart_endpoint_label_anchored_top_right():
+    """라벨 앵커가 (1, 0): 텍스트의 우측 끝이 곡선의 마지막 데이터 포인트 x와 정렬."""
     from ui.chart_view import ChartView
     chart = ChartView()
     chart.set_packages(["com.kakao.talk"])
     anchor = chart._labels["com.kakao.talk"].anchor
-    assert (anchor.x(), anchor.y()) == (0, 0), f"anchor: ({anchor.x()}, {anchor.y()})"
+    assert (anchor.x(), anchor.y()) == (1, 0), f"anchor: ({anchor.x()}, {anchor.y()})"
 
 
 def test_chart_top_legend_still_uses_short_name():

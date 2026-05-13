@@ -122,7 +122,7 @@ class ChartView(QWidget):
                 label = pg.TextItem(
                     text=pkg,            # Full 패키지명 (식별성 우선)
                     color=color,
-                    anchor=(0, 0),       # top-left 모서리가 데이터 포인트 → 텍스트는 점의 아래/우측에 렌더
+                    anchor=(1, 0),       # top-right 모서리가 데이터 포인트 → 텍스트 오른쪽 끝 = 곡선 끝 x좌표
                 )
                 label.setVisible(labels_visible)
                 self._plot.addItem(label)

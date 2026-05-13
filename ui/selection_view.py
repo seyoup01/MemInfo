@@ -111,7 +111,12 @@ class SelectionView(QWidget):
         top_btns.addWidget(self._lbl_sel_count)
 
         self._lbl_sel_sum = QLabel("합계: 0 KB")
-        self._lbl_sel_sum.setStyleSheet("font-weight: bold; padding-left: 12px;")
+        self._lbl_sel_sum.setStyleSheet(
+            "background-color: #2E7D32; color: white; "
+            "font-weight: bold; font-size: 11pt; "
+            "padding: 2px 10px; border-radius: 4px; "
+            "margin-left: 12px;"
+        )
         top_btns.addWidget(self._lbl_sel_sum)
 
         self._table = QTableWidget()
