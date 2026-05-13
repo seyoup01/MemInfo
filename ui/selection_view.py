@@ -26,7 +26,8 @@ _RESTARTED_CYCLES = 2
 
 
 class SelectionView(QWidget):
-    chart_requested = pyqtSignal(list)
+    chart_requested   = pyqtSignal(list)   # "차트 보기 ▶" 버튼 (탭 전환용)
+    selection_changed = pyqtSignal(list)   # 체크박스/전체선택 등 선택 변화 즉시 emit
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,6 +182,7 @@ class SelectionView(QWidget):
             self._selected_packages.discard(pkg)
         self._refresh_table()
         self._lbl_sel_count.setText(f"선택: {len(self._selected_packages)}개")
+        self.selection_changed.emit(self.selected_packages)
 
     def _select_all(self):
         self._list.blockSignals(True)
@@ -191,6 +193,7 @@ class SelectionView(QWidget):
         self._list.blockSignals(False)
         self._refresh_table()
         self._lbl_sel_count.setText(f"선택: {len(self._selected_packages)}개")
+        self.selection_changed.emit(self.selected_packages)
 
     def _select_none(self):
         self._list.blockSignals(True)
@@ -200,6 +203,7 @@ class SelectionView(QWidget):
         self._selected_packages.clear()
         self._refresh_table()
         self._lbl_sel_count.setText("선택: 0개")
+        self.selection_changed.emit(self.selected_packages)
 
     # ── 오른쪽 패널 ──────────────────────────────────────────────────────────
 
@@ -274,9 +278,11 @@ class SelectionView(QWidget):
         self._refresh_list()
         self._refresh_table()
         self._lbl_sel_count.setText(f"선택: {len(self._selected_packages)}개")
+        self.selection_changed.emit(self.selected_packages)
 
     def _clear_selection(self):
         self._selected_packages.clear()
         self._refresh_list()
         self._refresh_table()
         self._lbl_sel_count.setText("선택: 0개")
+        self.selection_changed.emit(self.selected_packages)

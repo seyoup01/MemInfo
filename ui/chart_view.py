@@ -70,21 +70,44 @@ class ChartView(QWidget):
         self._plot.setBackground("#1E1E2E")
         self._plot.setLabel("left", "PSS (KB)")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
-        self._plot.getPlotItem().getViewBox().setMouseEnabled(x=True, y=True)
+        self._vb = self._plot.getPlotItem().getViewBox()
+        self._vb.setMouseEnabled(x=True, y=True)
+        # PSS 는 음수가 없으므로 Y축을 0 이상으로 클램프 (자동 스케일·줌·팬 모두 적용)
+        self._vb.setLimits(yMin=0)
+        self._plot.setYRange(0, 1)
 
         layout.addWidget(self._plot)
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
 
     def set_packages(self, packages: list[str]) -> None:
-        """모니터링할 패키지 목록 설정 (최대 10개)."""
-        self._packages = list(packages[:_MAX_PACKAGES])
-        self._xs.clear()
-        self._ys.clear()
-        self._curves.clear()
-        self._plot.clear()
+        """모니터링할 패키지 목록 설정 (최대 10개).
+        유지되는 패키지의 누적 데이터는 보존, 추가/제거된 패키지만 곡선 정리.
+        """
+        new_packages = list(packages[:_MAX_PACKAGES])
+        new_set      = set(new_packages)
+
+        # 1. 빠진 패키지 곡선/데이터 제거
+        for pkg in list(self._curves.keys()):
+            if pkg not in new_set:
+                self._plot.removeItem(self._curves.pop(pkg))
+                self._ys.pop(pkg, None)
+
+        # 2. 새 패키지 곡선 추가 (기존 곡선은 색 인덱스 유지를 위해 new_packages 순회)
+        self._packages = new_packages
+        for i, pkg in enumerate(self._packages):
+            if pkg not in self._curves:
+                color = _PALETTE[i % len(_PALETTE)]
+                self._curves[pkg] = self._plot.plot(
+                    pen=pg.mkPen(color=color, width=2), name=pkg,
+                )
+
+        # 3. 선택된 패키지가 없으면 시간축도 의미 없음 — 정리
+        if not self._packages:
+            self._xs.clear()
+
         self._rebuild_legend()
-        self._rebuild_curves()
+        self._update_curves()
 
     def add_data_point(self, snapshot: MemInfoSnapshot) -> None:
         """스냅샷에서 설정된 패키지 데이터를 추출해 그래프에 추가."""
@@ -130,13 +153,6 @@ class ChartView(QWidget):
                 q.popleft()
         self._update_curves()
 
-    def _rebuild_curves(self):
-        for i, pkg in enumerate(self._packages):
-            color = _PALETTE[i % len(_PALETTE)]
-            pen   = pg.mkPen(color=color, width=2)
-            curve = self._plot.plot(pen=pen, name=pkg)
-            self._curves[pkg] = curve
-
     def _rebuild_legend(self):
         # 기존 범례 제거
         for i in reversed(range(self._legend_layout.count())):
@@ -155,7 +171,18 @@ class ChartView(QWidget):
 
     def _update_curves(self):
         xs = list(self._xs)
+        max_y = 0
         for pkg, curve in self._curves.items():
             ys = list(self._ys[pkg])
             n  = min(len(xs), len(ys))
             curve.setData(xs[-n:], ys[-n:])
+            if ys:
+                local_max = max(ys[-n:]) if n else 0
+                if local_max > max_y:
+                    max_y = local_max
+
+        # Y축은 항상 0부터, 상단은 최대값의 110% (음수 영역 노출 차단)
+        if max_y > 0:
+            self._vb.setYRange(0, max_y * 1.1, padding=0)
+        else:
+            self._vb.setYRange(0, 1, padding=0)

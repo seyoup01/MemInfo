@@ -266,6 +266,114 @@ def test_chart_add_data_without_packages(sample_snapshot):
     chart.add_data_point(sample_snapshot)   # should not raise
 
 
+# ── 차트 Y축 0 이상 클램프 ───────────────────────────────────────────────────
+
+def test_chart_view_y_axis_min_is_zero():
+    """PSS 는 음수 없으므로 Y축 최소가 0 으로 제한되어야 한다."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    y_lim_min, _ = chart._vb.state["limits"]["yLimits"]
+    assert y_lim_min == 0, f"yMin 클램프 미적용: {y_lim_min}"
+
+
+def test_chart_update_curves_keeps_y_min_zero(sample_snapshot):
+    """add_data_point 후에도 Y범위 하단이 0 이상이어야 한다."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    chart.add_data_point(sample_snapshot)
+    y_range = chart._vb.viewRange()[1]   # [yMin, yMax]
+    assert y_range[0] >= 0, f"Y축 하단이 음수: {y_range[0]}"
+
+
+# ── 증분 set_packages 데이터 보존 ────────────────────────────────────────────
+
+def test_chart_set_packages_incremental_preserves_data(sample_snapshot):
+    """set_packages 로 패키지 일부만 바뀔 때 유지되는 패키지 데이터는 보존."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+    for _ in range(5):
+        chart.add_data_point(sample_snapshot)
+
+    assert len(chart._ys["com.kakao.talk"]) == 5
+    assert len(chart._ys["com.android.systemui"]) == 5
+
+    # com.android.systemui 제거 + com.example 추가
+    chart.set_packages(["com.kakao.talk", "com.example"])
+
+    assert "com.kakao.talk" in chart._curves
+    assert "com.example" in chart._curves
+    assert "com.android.systemui" not in chart._curves, "제거된 패키지 곡선 남음"
+    assert len(chart._ys["com.kakao.talk"]) == 5, "유지된 패키지 데이터 손실됨"
+    assert "com.android.systemui" not in chart._ys
+    assert len(chart._ys["com.example"]) == 0
+
+
+# ── SelectionView selection_changed 시그널 ───────────────────────────────────
+
+def test_selection_view_emits_selection_changed_on_select_all(sample_snapshot):
+    """전체 선택 → selection_changed 발생, 전체 패키지 포함."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    sv.update_data(sample_snapshot)
+
+    received = []
+    sv.selection_changed.connect(lambda pkgs: received.append(list(pkgs)))
+    sv._select_all()
+
+    assert received, "selection_changed 시그널 미발생"
+    assert len(received[-1]) == sample_snapshot.total_process_count
+
+
+def test_selection_view_emits_selection_changed_on_clear(sample_snapshot):
+    """초기화 → selection_changed 가 빈 리스트로 발생."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    sv.update_data(sample_snapshot)
+    sv._select_all()
+
+    received = []
+    sv.selection_changed.connect(lambda pkgs: received.append(list(pkgs)))
+    sv._clear_selection()
+
+    assert received and received[-1] == [], f"빈 리스트 기대, 실제 {received}"
+
+
+def test_selection_view_emits_selection_changed_on_toggle(sample_snapshot):
+    """체크박스 토글 시 selection_changed 발생."""
+    from PyQt6.QtCore import Qt
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    sv.update_data(sample_snapshot)
+
+    received = []
+    sv.selection_changed.connect(lambda pkgs: received.append(list(pkgs)))
+    # 첫 항목 체크
+    item = sv._list.item(0)
+    item.setCheckState(Qt.CheckState.Checked)
+
+    assert received, "체크박스 토글 시 selection_changed 미발생"
+    assert item.text() in received[-1]
+
+
+# ── MainWindow 자동 동기화 ───────────────────────────────────────────────────
+
+def test_main_window_selection_change_updates_chart(sample_snapshot):
+    """SelectionView 의 선택 변경이 ChartView 패키지 목록에 즉시 반영된다."""
+    from ui.main_window import MainWindow
+    w = MainWindow()
+    w.selection_view.update_data(sample_snapshot)
+
+    assert w.chart_view._packages == [], "초기 chart_view._packages 비어있어야 함"
+
+    w.selection_view._select_all()
+    assert w.chart_view._packages, "선택 변경 후 chart_view 가 갱신되지 않음"
+    # 최대 10개로 제한되므로 min(전체, 10) 만큼 동기화
+    expected_count = min(sample_snapshot.total_process_count, 10)
+    assert len(w.chart_view._packages) == expected_count
+
+
 # ── MainWindow 연결 ──────────────────────────────────────────────────────────
 
 def test_main_window_has_chart_view():

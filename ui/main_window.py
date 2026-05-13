@@ -161,6 +161,8 @@ class MainWindow(QMainWindow):
         self.toolbar.pause_clicked.connect(self._on_pause)
         self.toolbar.stop_clicked.connect(self._on_stop)
         self.selection_view.chart_requested.connect(self._on_chart_requested)
+        # Process Select 의 체크박스 변경이 즉시 Chart 에 반영되도록 자동 동기화
+        self.selection_view.selection_changed.connect(self._on_selection_changed)
 
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
@@ -281,10 +283,13 @@ class MainWindow(QMainWindow):
             "기기에 재연결하지 못했습니다.\n수동으로 연결 후 다시 시작하세요."
         )
 
-    def _on_chart_requested(self, packages: list):
+    def _on_selection_changed(self, packages: list):
+        """Process Select 의 체크박스 변경을 Chart 에 즉시 반영 (데이터 보존)."""
         self.chart_view.set_packages(packages)
-        self.chart_view.clear()
-        # Chart 탭으로 전환
+
+    def _on_chart_requested(self, packages: list):
+        """'차트 보기 ▶' 버튼: 패키지 정합성 + Chart 탭으로 전환."""
+        self.chart_view.set_packages(packages)
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i).endswith("Chart"):
                 self.tabs.setCurrentIndex(i)
