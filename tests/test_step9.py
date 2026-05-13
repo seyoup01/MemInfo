@@ -1,0 +1,295 @@
+"""STEP 9 검증: 차트 뷰 및 알림 매니저"""
+import copy
+import os
+import sys
+import time
+
+import pytest
+from PyQt6.QtWidgets import QApplication
+
+_app = QApplication.instance() or QApplication(sys.argv)
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_meminfo.txt")
+
+
+@pytest.fixture
+def sample_snapshot():
+    from core.meminfo_parser import parse
+    with open(FIXTURE, encoding="utf-8") as f:
+        return parse(f.read(), "test_device")
+
+
+# ── AlertManager imports ──────────────────────────────────────────────────────
+
+def test_alert_manager_imports():
+    from core.alert_manager import AlertManager, AlertRule
+    assert AlertManager is not None
+    assert AlertRule is not None
+
+
+# ── AlertManager 기본 동작 ────────────────────────────────────────────────────
+
+def test_alert_fires_when_threshold_exceeded(sample_snapshot):
+    """memory > threshold → 알림 발동."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    # com.kakao.talk = 45000 KB, threshold 40000 → 초과
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.kakao.talk" in fired
+
+
+def test_alert_not_fired_when_below_threshold(sample_snapshot):
+    """memory < threshold → 알림 없음."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    # com.kakao.talk = 45000 KB, threshold 50000 → 미초과
+    mgr.set_rule("com.kakao.talk", threshold_kb=50_000)
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.kakao.talk" not in fired
+
+
+def test_alert_no_repeat_while_triggered(sample_snapshot):
+    """triggered=True 상태에서 동일 스냅샷 재확인 → 재발 없음."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    mgr.check_snapshot(sample_snapshot)   # 1회 발동
+    fired2 = mgr.check_snapshot(sample_snapshot)  # 재확인
+    assert len(fired2) == 0, "같은 상태에서 재발동됨"
+
+
+def test_alert_triggered_state(sample_snapshot):
+    """초과 후 triggered=True 상태여야 함."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    mgr.check_snapshot(sample_snapshot)
+    assert mgr.rules()["com.kakao.talk"].triggered is True
+
+
+def test_alert_reset_on_significant_drop(sample_snapshot):
+    """10% 이상 감소 시 triggered=False 리셋."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+
+    # 1) 알림 발동 (45000 KB)
+    mgr.check_snapshot(sample_snapshot)
+    rule = mgr.rules()["com.kakao.talk"]
+    assert rule.triggered is True
+    last_alert = rule.last_alert_kb   # 45000
+
+    # 2) 메모리를 90% 미만으로 낮춘 스냅샷 생성 (< 45000 * 0.9 = 40500)
+    snap2 = copy.deepcopy(sample_snapshot)
+    for g in snap2.adj_groups:
+        for p in g.processes:
+            if p.package_name == "com.kakao.talk":
+                p.memory_kb = 30_000   # 40500 미만
+    mgr.check_snapshot(snap2)
+
+    assert mgr.rules()["com.kakao.talk"].triggered is False, \
+        "10% 이상 감소 후 triggered가 리셋되지 않음"
+
+
+def test_alert_no_reset_on_small_drop(sample_snapshot):
+    """10% 미만 감소 시 triggered 유지."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    mgr.check_snapshot(sample_snapshot)   # 발동 (45000)
+
+    # 45000 * 0.9 = 40500 → 40600은 아직 90% 이상
+    snap2 = copy.deepcopy(sample_snapshot)
+    for g in snap2.adj_groups:
+        for p in g.processes:
+            if p.package_name == "com.kakao.talk":
+                p.memory_kb = 42_000   # > 40500
+    mgr.check_snapshot(snap2)
+
+    assert mgr.rules()["com.kakao.talk"].triggered is True
+
+
+def test_alert_refires_after_reset(sample_snapshot):
+    """리셋 후 다시 임계값 초과 → 재발동."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+
+    # 1) 발동
+    mgr.check_snapshot(sample_snapshot)
+
+    # 2) 큰 폭 감소 → 리셋
+    snap_low = copy.deepcopy(sample_snapshot)
+    for g in snap_low.adj_groups:
+        for p in g.processes:
+            if p.package_name == "com.kakao.talk":
+                p.memory_kb = 20_000
+    mgr.check_snapshot(snap_low)
+    assert mgr.rules()["com.kakao.talk"].triggered is False
+
+    # 3) 다시 초과
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.kakao.talk" in fired, "리셋 후 재발동 실패"
+
+
+def test_alert_remove_rule(sample_snapshot):
+    """remove_rule() 후 해당 패키지 알림 없음."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    mgr.remove_rule("com.kakao.talk")
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.kakao.talk" not in fired
+
+
+def test_alert_multiple_rules(sample_snapshot):
+    """복수 규칙 동시 확인."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    # com.kakao.talk(45000) > 40000 → 발동
+    # com.android.systemui(98765) > 90000 → 발동
+    mgr.set_rule("com.kakao.talk", threshold_kb=40_000)
+    mgr.set_rule("com.android.systemui", threshold_kb=90_000)
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.kakao.talk" in fired
+    assert "com.android.systemui" in fired
+
+
+def test_alert_unknown_package_ignored(sample_snapshot):
+    """스냅샷에 없는 패키지 규칙 → 알림 없음."""
+    from core.alert_manager import AlertManager
+    mgr = AlertManager(alert_sound=False)
+    mgr.set_rule("com.nonexistent.app", threshold_kb=0)
+    fired = mgr.check_snapshot(sample_snapshot)
+    assert "com.nonexistent.app" not in fired
+
+
+# ── AlertLogPanel ─────────────────────────────────────────────────────────────
+
+def test_alert_log_panel_imports():
+    from ui.alert_log_panel import AlertLogPanel
+    assert AlertLogPanel is not None
+
+
+def test_alert_log_add_alert():
+    from ui.alert_log_panel import AlertLogPanel
+    panel = AlertLogPanel()
+    panel.add_alert("com.kakao.talk", 50_000, 40_000)
+    assert panel.row_count() == 1
+
+
+def test_alert_log_max_rows():
+    """100건 초과 시 오래된 행 제거."""
+    from ui.alert_log_panel import AlertLogPanel, _MAX_ROWS
+    panel = AlertLogPanel()
+    for i in range(_MAX_ROWS + 5):
+        panel.add_alert(f"pkg{i}", i * 1000, 40_000)
+    assert panel.row_count() == _MAX_ROWS
+
+
+def test_alert_log_clear():
+    from ui.alert_log_panel import AlertLogPanel
+    panel = AlertLogPanel()
+    panel.add_alert("com.test", 10_000, 5_000)
+    panel._clear()
+    assert panel.row_count() == 0
+
+
+# ── ChartView ─────────────────────────────────────────────────────────────────
+
+def test_chart_view_imports():
+    from ui.chart_view import ChartView
+    assert ChartView is not None
+
+
+def test_chart_set_packages(sample_snapshot):
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+    assert chart._packages == ["com.kakao.talk", "com.android.systemui"]
+
+
+def test_chart_set_packages_max_10():
+    from ui.chart_view import ChartView, _MAX_PACKAGES
+    chart = ChartView()
+    pkgs = [f"com.pkg{i}" for i in range(15)]
+    chart.set_packages(pkgs)
+    assert len(chart._packages) == _MAX_PACKAGES
+
+
+def test_chart_add_data_point_no_error(sample_snapshot):
+    """add_data_point() 호출 시 예외 없어야 함."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+    chart.add_data_point(sample_snapshot)
+    chart.add_data_point(sample_snapshot)
+    assert len(chart._xs) == 2
+
+
+def test_chart_data_accumulates(sample_snapshot):
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    for _ in range(5):
+        chart.add_data_point(sample_snapshot)
+    assert len(chart._xs) == 5
+    assert len(chart._ys["com.kakao.talk"]) == 5
+
+
+def test_chart_sample_count_limit(sample_snapshot):
+    """sample_count 초과 시 오래된 데이터 제거."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    chart._sample_count = 3
+    for _ in range(5):
+        chart.add_data_point(sample_snapshot)
+    assert len(chart._xs) == 3
+    assert len(chart._ys["com.kakao.talk"]) == 3
+
+
+def test_chart_clear(sample_snapshot):
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    chart.add_data_point(sample_snapshot)
+    chart.clear()
+    assert len(chart._xs) == 0
+
+
+def test_chart_add_data_without_packages(sample_snapshot):
+    """set_packages 없이 add_data_point → 예외 없음."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.add_data_point(sample_snapshot)   # should not raise
+
+
+# ── MainWindow 연결 ──────────────────────────────────────────────────────────
+
+def test_main_window_has_chart_view():
+    from ui.main_window import MainWindow
+    from ui.chart_view import ChartView
+    w = MainWindow()
+    assert isinstance(w.chart_view, ChartView)
+
+
+def test_main_window_has_alert_manager():
+    from ui.main_window import MainWindow
+    from core.alert_manager import AlertManager
+    w = MainWindow()
+    assert isinstance(w._alert_manager, AlertManager)
+
+
+def test_main_window_has_alert_log():
+    from ui.main_window import MainWindow
+    from ui.alert_log_panel import AlertLogPanel
+    w = MainWindow()
+    assert isinstance(w.alert_log, AlertLogPanel)
+
+
+def test_main_window_4_tabs():
+    from ui.main_window import MainWindow
+    w = MainWindow()
+    assert w.tabs.count() == 4

@@ -1,0 +1,28 @@
+Applications Memory Usage (in Kilobytes):
+Uptime: 12345678 Realtime: 12345678
+
+** MEMINFO in pid 1234 [com.android.systemui] **
+
+Total PSS by process:
+    98,765K: com.android.systemui (pid 1234)
+    45,000K: com.kakao.talk (pid 5678)
+    12,000K: /system/bin/surfaceflinger (pid 234)
+     1,234K: /init (pid 1)
+
+Total PSS by OOM adjustment:
+    13,234K: Native
+              12,000K: /system/bin/surfaceflinger (pid 234)
+               1,234K: /init (pid 1)
+    98,765K: System
+              98,765K: com.android.systemui (pid 1234)
+    45,000K: Foreground
+              45,000K: com.kakao.talk (pid 5678)
+     8,500K: Visible
+               5,000K: com.example.launcher (pid 2345)
+               3,500K: com.example.widget (pid 3456)
+     2,100K: Cached
+               2,100K: com.old.app (pid 9999)
+
+Total PSS by category:
+    98,765K: .art mmap
+    45,000K: .dex mmap

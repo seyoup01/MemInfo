@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# PyInstaller
+*.spec.bak
+dist/
+build/
+
+# SQLite database
+*.db
+*.sqlite3
+
+# Settings & user data
+~/.meminfo_monitor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
