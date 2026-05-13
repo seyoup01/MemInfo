@@ -224,6 +224,40 @@ def test_selection_list_empty_before_update():
     assert sv._list.count() == 0
 
 
+# ── SelectionView 합계 라벨 ───────────────────────────────────────────────────
+
+def test_selection_view_has_sum_label():
+    """합계 라벨이 존재해야 한다."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    assert hasattr(sv, "_lbl_sel_sum")
+    assert "0" in sv._lbl_sel_sum.text()
+
+
+def test_selection_view_sum_updates_on_select_all(sample_snapshot):
+    """전체 선택 시 합계가 전체 메모리와 일치하고 콤마 포맷이어야 한다."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    sv.update_data(sample_snapshot)
+    sv._select_all()
+
+    expected = sum(
+        p.memory_kb for g in sample_snapshot.adj_groups for p in g.processes
+    )
+    text = sv._lbl_sel_sum.text()
+    assert f"{expected:,}" in text, f"합계 라벨 불일치: {text}"
+
+
+def test_selection_view_sum_zero_when_none_selected(sample_snapshot):
+    """선택 해제 시 합계는 0."""
+    from ui.selection_view import SelectionView
+    sv = SelectionView()
+    sv.update_data(sample_snapshot)
+    sv._select_all()
+    sv._select_none()
+    assert "0" in sv._lbl_sel_sum.text()
+
+
 # ── SelectionView update_data ─────────────────────────────────────────────────
 
 def test_selection_update_data_populates_list(sample_snapshot):

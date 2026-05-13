@@ -374,6 +374,126 @@ def test_main_window_selection_change_updates_chart(sample_snapshot):
     assert len(w.chart_view._packages) == expected_count
 
 
+# ── Chart Y축 콤마 포맷 / SI prefix 차단 ─────────────────────────────────────
+
+def test_chart_y_axis_uses_comma_format():
+    """_KbAxisItem.tickStrings 가 콤마 구분 정수를 반환해야 한다."""
+    from ui.chart_view import _KbAxisItem
+    axis = _KbAxisItem(orientation="left")
+    result = axis.tickStrings([1000, 200000, 1234567], 1, 1)
+    assert result == ["1,000", "200,000", "1,234,567"], f"포맷 불일치: {result}"
+
+
+def test_chart_y_axis_auto_si_prefix_disabled():
+    """좌측 Y축의 autoSIPrefix 가 비활성화되어 1e+06 표기 차단."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    left_axis = chart._plot.getAxis("left")
+    assert left_axis.autoSIPrefix is False
+
+
+# ── Chart 슬라이더 제거 ──────────────────────────────────────────────────────
+
+def test_chart_view_has_no_sample_count_slider():
+    """'표시 범위' 슬라이더와 샘플 카운트 라벨이 제거되어야 한다."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    assert not hasattr(chart, "_slider")
+    assert not hasattr(chart, "_lbl_samples")
+
+
+def test_chart_view_sample_count_attribute_persists():
+    """슬라이더 제거 후에도 _sample_count 속성은 유지 (직접 세팅으로 제어)."""
+    from ui.chart_view import ChartView, _DEFAULT_SAMPLES
+    chart = ChartView()
+    assert chart._sample_count == _DEFAULT_SAMPLES
+
+
+# ── Chart 패키지명 라벨 + 토글 ───────────────────────────────────────────────
+
+def test_chart_has_label_toggle_checkbox():
+    """패키지명 표시 토글 체크박스가 존재하고 기본 ON."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    assert hasattr(chart, "_chk_labels")
+    assert chart._chk_labels.isChecked() is True
+
+
+def test_chart_creates_text_label_per_package():
+    """set_packages 후 패키지마다 TextItem 라벨이 생성된다."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+    assert len(chart._labels) == 2
+    assert "com.kakao.talk" in chart._labels
+    assert "com.android.systemui" in chart._labels
+
+
+def test_chart_text_label_position_follows_last_point(sample_snapshot):
+    """add_data_point 후 라벨이 마지막 (x, y) 위치로 이동."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    chart.add_data_point(sample_snapshot)
+
+    last_x = chart._xs[-1]
+    last_y = chart._ys["com.kakao.talk"][-1]
+    pos = chart._labels["com.kakao.talk"].pos()
+    assert pos.x() == last_x
+    assert pos.y() == last_y
+
+
+def test_chart_toggle_hides_text_labels():
+    """토글 OFF 시 모든 라벨이 비가시 상태."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+
+    chart._chk_labels.setChecked(False)
+    for label in chart._labels.values():
+        assert label.isVisible() is False
+
+    chart._chk_labels.setChecked(True)
+    for label in chart._labels.values():
+        assert label.isVisible() is True
+
+
+def test_chart_removes_label_when_package_dropped():
+    """set_packages 로 빠진 패키지의 TextItem 도 함께 제거."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.a", "com.b"])
+    assert "com.b" in chart._labels
+
+    chart.set_packages(["com.a"])
+    assert "com.b" not in chart._labels
+
+
+# ── Chart 합계 라벨 ──────────────────────────────────────────────────────────
+
+def test_chart_sum_label_initially_zero():
+    """초기 합계 라벨은 '0 KB'."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    assert "0" in chart._lbl_chart_sum.text()
+
+
+def test_chart_sum_label_updates_with_data(sample_snapshot):
+    """add_data_point 후 차트 합계가 콤마 포맷으로 표시된다."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+    chart.add_data_point(sample_snapshot)
+
+    # 샘플: com.kakao.talk=45000, com.android.systemui=98765 → 합계 143,765
+    expected = (
+        chart._ys["com.kakao.talk"][-1]
+        + chart._ys["com.android.systemui"][-1]
+    )
+    text = chart._lbl_chart_sum.text()
+    assert f"{expected:,}" in text, f"합계 라벨: {text}"
+
+
 # ── MainWindow 연결 ──────────────────────────────────────────────────────────
 
 def test_main_window_has_chart_view():

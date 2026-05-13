@@ -25,6 +25,17 @@ _HEADERS = ["Package Name", "PID", "PSS(KB)", "Δ", "상태"]
 _RESTARTED_CYCLES = 2
 
 
+def _format_size(kb: int) -> str:
+    """KB 값을 사람이 읽기 좋게 단위 변환 (KB / MB / GB)."""
+    if kb < 1024:
+        return f"{kb:,} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.1f} MB"
+    gb = mb / 1024
+    return f"{gb:.2f} GB"
+
+
 class SelectionView(QWidget):
     chart_requested   = pyqtSignal(list)   # "차트 보기 ▶" 버튼 (탭 전환용)
     selection_changed = pyqtSignal(list)   # 체크박스/전체선택 등 선택 변화 즉시 emit
@@ -98,6 +109,10 @@ class SelectionView(QWidget):
 
         self._lbl_sel_count = QLabel("선택: 0개")
         top_btns.addWidget(self._lbl_sel_count)
+
+        self._lbl_sel_sum = QLabel("합계: 0 KB")
+        self._lbl_sel_sum.setStyleSheet("font-weight: bold; padding-left: 12px;")
+        top_btns.addWidget(self._lbl_sel_sum)
 
         self._table = QTableWidget()
         self._table.setColumnCount(len(_HEADERS))
@@ -209,6 +224,7 @@ class SelectionView(QWidget):
 
     def _refresh_table(self):
         self._table.setRowCount(0)
+        self._refresh_sum_label()
 
         for pkg in sorted(self._selected_packages):
             row = self._table.rowCount()
@@ -255,6 +271,16 @@ class SelectionView(QWidget):
                 if bg is not None:
                     cell.setBackground(QBrush(bg))
                 self._table.setItem(row, col, cell)
+
+    def _refresh_sum_label(self):
+        """선택된 프로세스의 PSS 합계 (현재 스냅샷 기준, 종료된 항목은 마지막값)."""
+        total_kb = 0
+        for pkg in self._selected_packages:
+            if pkg in self._all_procs:
+                total_kb += self._all_procs[pkg].memory_kb
+            elif pkg in self._gone_procs:
+                total_kb += self._gone_procs[pkg].memory_kb
+        self._lbl_sel_sum.setText(f"합계: {total_kb:,} KB ({_format_size(total_kb)})")
 
     def _save_selection(self):
         path, _ = QFileDialog.getSaveFileName(

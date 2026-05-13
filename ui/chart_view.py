@@ -2,15 +2,13 @@ from datetime import datetime
 from collections import defaultdict, deque
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
 )
 
 from core.data_models import MemInfoSnapshot
 
-_MAX_PACKAGES  = 10
+_MAX_PACKAGES    = 10
 _DEFAULT_SAMPLES = 200
 _PALETTE = [
     "#E53935", "#8E24AA", "#1E88E5", "#43A047", "#FB8C00",
@@ -27,14 +25,21 @@ class _TimeAxisItem(pg.AxisItem):
         ]
 
 
+class _KbAxisItem(pg.AxisItem):
+    """PSS(KB) Y축 — 콤마 구분 정수 포맷 (1e+06 등 과학표기 차단)."""
+    def tickStrings(self, values, scale, spacing):
+        return [f"{int(round(v)):,}" for v in values]
+
+
 class ChartView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._packages: list[str]                    = []
-        self._sample_count: int                      = _DEFAULT_SAMPLES
-        self._xs: deque[float]                       = deque()
-        self._ys: dict[str, deque[int]]              = defaultdict(deque)
-        self._curves: dict[str, pg.PlotDataItem]     = {}
+        self._packages: list[str]                  = []
+        self._sample_count: int                    = _DEFAULT_SAMPLES
+        self._xs: deque[float]                     = deque()
+        self._ys: dict[str, deque[int]]            = defaultdict(deque)
+        self._curves: dict[str, pg.PlotDataItem]   = {}
+        self._labels: dict[str, pg.TextItem]       = {}
         self._build_ui()
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
@@ -46,33 +51,43 @@ class ChartView(QWidget):
 
         # 컨트롤 행
         ctrl = QHBoxLayout()
-        ctrl.addWidget(QLabel("표시 범위:"))
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
-        self._slider.setRange(50, 1_000)
-        self._slider.setValue(_DEFAULT_SAMPLES)
-        self._slider.setFixedWidth(180)
-        self._slider.valueChanged.connect(self._on_sample_count_changed)
-        ctrl.addWidget(self._slider)
-
-        self._lbl_samples = QLabel(f"{_DEFAULT_SAMPLES} 샘플")
-        ctrl.addWidget(self._lbl_samples)
+        # 패키지명 표시 토글 (기본 ON)
+        self._chk_labels = QCheckBox("패키지명 표시")
+        self._chk_labels.setChecked(True)
+        self._chk_labels.toggled.connect(self._on_toggle_labels)
+        ctrl.addWidget(self._chk_labels)
 
         ctrl.addStretch()
+
+        # 차트에 표시되는 패키지들의 PSS 합계
+        self._lbl_chart_sum = QLabel("합계: 0 KB")
+        self._lbl_chart_sum.setStyleSheet("font-weight: bold;")
+        ctrl.addWidget(self._lbl_chart_sum)
+
+        ctrl.addSpacing(12)
+
+        # 우측 범례
         self._legend_layout = QHBoxLayout()
         ctrl.addLayout(self._legend_layout)
         layout.addLayout(ctrl)
 
         # pyqtgraph 차트
         self._plot = pg.PlotWidget(
-            axisItems={"bottom": _TimeAxisItem(orientation="bottom")}
+            axisItems={
+                "bottom": _TimeAxisItem(orientation="bottom"),
+                "left":   _KbAxisItem(orientation="left"),
+            }
         )
         self._plot.setBackground("#1E1E2E")
         self._plot.setLabel("left", "PSS (KB)")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
+        # 과학적 표기 (k/M/G prefix) 차단 — 콤마 포맷만 사용
+        self._plot.getAxis("left").enableAutoSIPrefix(False)
+
         self._vb = self._plot.getPlotItem().getViewBox()
         self._vb.setMouseEnabled(x=True, y=True)
-        # PSS 는 음수가 없으므로 Y축을 0 이상으로 클램프 (자동 스케일·줌·팬 모두 적용)
+        # PSS 는 음수가 없으므로 Y축을 0 이상으로 클램프
         self._vb.setLimits(yMin=0)
         self._plot.setYRange(0, 1)
 
@@ -87,20 +102,29 @@ class ChartView(QWidget):
         new_packages = list(packages[:_MAX_PACKAGES])
         new_set      = set(new_packages)
 
-        # 1. 빠진 패키지 곡선/데이터 제거
+        # 1. 빠진 패키지 곡선/라벨/데이터 제거
         for pkg in list(self._curves.keys()):
             if pkg not in new_set:
                 self._plot.removeItem(self._curves.pop(pkg))
                 self._ys.pop(pkg, None)
+                if pkg in self._labels:
+                    self._plot.removeItem(self._labels.pop(pkg))
 
-        # 2. 새 패키지 곡선 추가 (기존 곡선은 색 인덱스 유지를 위해 new_packages 순회)
+        # 2. 새 패키지 곡선 + 끝점 텍스트 라벨 추가
         self._packages = new_packages
+        labels_visible = self._chk_labels.isChecked()
         for i, pkg in enumerate(self._packages):
             if pkg not in self._curves:
                 color = _PALETTE[i % len(_PALETTE)]
                 self._curves[pkg] = self._plot.plot(
                     pen=pg.mkPen(color=color, width=2), name=pkg,
                 )
+                label = pg.TextItem(
+                    text=pkg.split(".")[-1], color=color, anchor=(0, 0.5)
+                )
+                label.setVisible(labels_visible)
+                self._plot.addItem(label)
+                self._labels[pkg] = label
 
         # 3. 선택된 패키지가 없으면 시간축도 의미 없음 — 정리
         if not self._packages:
@@ -139,19 +163,14 @@ class ChartView(QWidget):
         self._ys.clear()
         for curve in self._curves.values():
             curve.setData([], [])
+        for label in self._labels.values():
+            label.setPos(0, 0)
 
     # ── 내부 ─────────────────────────────────────────────────────────────────
 
-    def _on_sample_count_changed(self, value: int):
-        self._sample_count = value
-        self._lbl_samples.setText(f"{value} 샘플")
-        # 넘치는 데이터 제거
-        while len(self._xs) > value:
-            self._xs.popleft()
-        for q in self._ys.values():
-            while len(q) > value:
-                q.popleft()
-        self._update_curves()
+    def _on_toggle_labels(self, checked: bool):
+        for label in self._labels.values():
+            label.setVisible(checked)
 
     def _rebuild_legend(self):
         # 기존 범례 제거
@@ -165,24 +184,34 @@ class ChartView(QWidget):
             badge = QLabel("●")
             badge.setStyleSheet(f"color: {color}; font-size: 14px;")
             self._legend_layout.addWidget(badge)
-            lbl = QLabel(pkg.split(".")[-1])   # 마지막 패키지 세그먼트만
+            lbl = QLabel(pkg.split(".")[-1])
             lbl.setToolTip(pkg)
             self._legend_layout.addWidget(lbl)
 
     def _update_curves(self):
         xs = list(self._xs)
         max_y = 0
+        total = 0
         for pkg, curve in self._curves.items():
             ys = list(self._ys[pkg])
             n  = min(len(xs), len(ys))
             curve.setData(xs[-n:], ys[-n:])
+
+            # 곡선 끝점에 패키지명 라벨 이동
+            if n > 0 and pkg in self._labels:
+                self._labels[pkg].setPos(xs[-1], ys[-1])
+
             if ys:
                 local_max = max(ys[-n:]) if n else 0
                 if local_max > max_y:
                     max_y = local_max
+                total += ys[-1]
 
-        # Y축은 항상 0부터, 상단은 최대값의 110% (음수 영역 노출 차단)
+        # Y축은 항상 0부터, 상단은 최대값의 110%
         if max_y > 0:
             self._vb.setYRange(0, max_y * 1.1, padding=0)
         else:
             self._vb.setYRange(0, 1, padding=0)
+
+        # 차트 합계 라벨
+        self._lbl_chart_sum.setText(f"합계: {total:,} KB")
