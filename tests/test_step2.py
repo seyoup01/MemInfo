@@ -137,3 +137,81 @@ def test_parse_memory_kb_no_comma():
         assert isinstance(group.total_memory_kb, int)
         for proc in group.processes:
             assert isinstance(proc.memory_kb, int)
+
+
+# ── 실측 Samsung 기기 출력 검증 (12개 ADJ + 트레일링 토큰 변형) ────────────────
+
+REAL_FIXTURE = os.path.join(
+    os.path.dirname(__file__), "fixtures", "real_meminfo.txt"
+)
+
+with open(REAL_FIXTURE, encoding="utf-8") as _f:
+    REAL_RAW = _f.read()
+
+
+def test_parse_real_device_adj_groups():
+    """실측 데이터에서 12개 ADJ 그룹이 모두 검출되어야 한다."""
+    from core.meminfo_parser import parse
+    snap = parse(REAL_RAW, "real_device")
+    categories = [g.adj_category for g in snap.adj_groups]
+    expected = [
+        "Native", "System", "Persistent", "Persistent Service",
+        "Foreground", "Visible", "Perceptible", "Perceptible Low",
+        "A Services", "B Services", "Picked", "Cached",
+    ]
+    assert categories == expected, f"카테고리 불일치: {categories}"
+
+
+def test_parse_real_device_no_phantom_adj():
+    """모든 adj_category가 ADJ_ORDER 화이트리스트에 포함 (오인식 0건)."""
+    from core.meminfo_parser import parse
+    from core.data_models import ADJ_ORDER
+    snap = parse(REAL_RAW, "real_device")
+    for g in snap.adj_groups:
+        assert g.adj_category in ADJ_ORDER, \
+            f"미지의 ADJ 카테고리: {g.adj_category!r}"
+        # 프로세스 정보가 ADJ로 잘못 들어가 있는지 확인
+        assert "(pid" not in g.adj_category
+        assert "K:" not in g.adj_category
+
+
+def test_parse_real_device_process_with_activities():
+    """`(pid N / activities)` 패턴 프로세스가 정상 파싱되어야 한다."""
+    from core.meminfo_parser import parse
+    snap = parse(REAL_RAW, "real_device")
+    all_procs = [p for g in snap.adj_groups for p in g.processes]
+    # 샘플: "102,600K: com.android.settings (pid 19399 / activities)"
+    settings = [p for p in all_procs if p.package_name == "com.android.settings"]
+    assert settings, "com.android.settings 가 파싱되지 않음"
+    assert settings[0].pid == 19399
+
+
+def test_parse_real_device_process_with_user():
+    """트레일링 `(user N)` 가 있어도 패키지명/PID 정상 추출."""
+    from core.meminfo_parser import parse
+    snap = parse(REAL_RAW, "real_device")
+    all_procs = [p for g in snap.adj_groups for p in g.processes]
+    # 샘플: "57,396K: com.google.android.gms.persistent (pid 27425) (user 150)"
+    matches = [
+        p for p in all_procs
+        if p.package_name == "com.google.android.gms.persistent" and p.pid == 27425
+    ]
+    assert matches, "(user 150) 트레일링 프로세스가 파싱되지 않음"
+
+
+def test_parse_real_device_total_native():
+    """Native 그룹 총합이 1,242,354K 와 일치."""
+    from core.meminfo_parser import parse
+    snap = parse(REAL_RAW, "real_device")
+    native = next(g for g in snap.adj_groups if g.adj_category == "Native")
+    assert native.total_memory_kb == 1_242_354
+
+
+def test_parse_real_device_process_under_correct_group():
+    """surfaceflinger(pid 2539) 는 Native 그룹 아래에 등록되어야 한다."""
+    from core.meminfo_parser import parse
+    snap = parse(REAL_RAW, "real_device")
+    native = next(g for g in snap.adj_groups if g.adj_category == "Native")
+    sf = [p for p in native.processes if p.package_name == "surfaceflinger"]
+    assert sf and sf[0].pid == 2539
+    assert sf[0].memory_kb == 223_725

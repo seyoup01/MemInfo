@@ -9,10 +9,10 @@ ADJ_ORDER = {
     "Foreground": 4,
     "Visible": 5,
     "Perceptible": 6,
-    "Backup": 7,
-    "Heavy Weight": 8,
-    "A Services": 9,
-    "B Services": 10,
+    "Perceptible Low": 7,
+    "A Services": 8,
+    "B Services": 9,
+    "Picked": 10,
     "Cached": 11,
 }
 
