@@ -255,10 +255,10 @@ def test_delta_zero_shows_dash(sample_snapshot):
         f"delta=0 인데 '-' 아님: '{child.text(COL_DELTA)}'"
 
 
-def test_new_process_row_has_green_background(sample_snapshot):
-    """is_new=True 프로세스의 행 배경이 연두색(#E8F5E9)이어야 함."""
+def test_new_process_row_has_dark_green_background(sample_snapshot):
+    """is_new=True 프로세스의 행 배경이 다크 테마 흰 글자 대비용 어두운 녹색(#2E7D32)."""
     from PyQt6.QtGui import QColor
-    from ui.main_view import MainView, COL_PACKAGE
+    from ui.main_view import MainView, COL_PACKAGE, _CLR_NEW
     proc = sample_snapshot.adj_groups[0].processes[0]
     proc.is_new = True
 
@@ -267,13 +267,14 @@ def test_new_process_row_has_green_background(sample_snapshot):
     parent = v.tree.topLevelItem(0)
     child  = parent.child(0)
     bg = child.background(COL_PACKAGE).color()
-    assert bg == QColor("#E8F5E9"), f"신규 프로세스 배경색 불일치: {bg.name()}"
+    assert bg == _CLR_NEW, f"신규 프로세스 배경색 불일치: {bg.name()}"
+    assert bg == QColor("#2E7D32")
 
 
-def test_gone_process_row_has_red_background(sample_snapshot):
-    """is_gone=True 프로세스의 행 배경이 연빨간색(#FFEBEE)이어야 함."""
+def test_gone_process_row_has_purple_background(sample_snapshot):
+    """is_gone=True 프로세스의 행 배경이 다크 테마 흰 글자 대비용 보라(#6E5A8C)."""
     from PyQt6.QtGui import QColor
-    from ui.main_view import MainView, COL_PACKAGE
+    from ui.main_view import MainView, COL_PACKAGE, _CLR_GONE
     proc = sample_snapshot.adj_groups[0].processes[0]
     proc.is_gone = True
 
@@ -282,4 +283,5 @@ def test_gone_process_row_has_red_background(sample_snapshot):
     parent = v.tree.topLevelItem(0)
     child  = parent.child(0)
     bg = child.background(COL_PACKAGE).color()
-    assert bg == QColor("#FFEBEE"), f"종료 프로세스 배경색 불일치: {bg.name()}"
+    assert bg == _CLR_GONE, f"종료 프로세스 배경색 불일치: {bg.name()}"
+    assert bg == QColor("#6E5A8C")

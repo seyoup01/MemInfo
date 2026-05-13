@@ -11,8 +11,8 @@ _app = QApplication.instance() or QApplication(sys.argv)
 
 def test_toolbar_interval_to_sec_basic():
     from ui.toolbar import Toolbar
-    assert Toolbar._interval_to_sec("1s")   == 1
     assert Toolbar._interval_to_sec("5s")   == 5
+    assert Toolbar._interval_to_sec("10s")  == 10
     assert Toolbar._interval_to_sec("30s")  == 30
     assert Toolbar._interval_to_sec("1분")  == 60
     assert Toolbar._interval_to_sec("5분")  == 300
@@ -24,6 +24,13 @@ def test_toolbar_interval_to_sec_all_labels():
     for label, expected in _INTERVAL_MAP.items():
         assert Toolbar._interval_to_sec(label) == expected, \
             f"{label} → 기대 {expected}초, 실제 {Toolbar._interval_to_sec(label)}초"
+
+
+def test_toolbar_interval_excludes_short_options():
+    """1s/2s/3s/4s 옵션은 제거되어야 한다 (dumpsys 응답 지연 대응)."""
+    from ui.toolbar import _INTERVAL_MAP
+    for short in ("1s", "2s", "3s", "4s"):
+        assert short not in _INTERVAL_MAP
 
 
 def test_toolbar_interval_unknown_returns_default():

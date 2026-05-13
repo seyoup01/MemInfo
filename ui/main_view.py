@@ -34,8 +34,8 @@ _CLR_HEADER_BG  = QColor("#1E1E2E")
 _CLR_HEADER_FG  = QColor("#CDD6F4")
 _CLR_FLAT_BG    = QColor("#2D3748")   # 플랫 정렬 헤더
 _CLR_FLAT_FG    = QColor("#E2E8F0")
-_CLR_NEW        = QColor("#E8F5E9")
-_CLR_GONE       = QColor("#FFEBEE")
+_CLR_NEW        = QColor("#2E7D32")   # 다크 테마 흰 글자 대비용 어두운 녹색
+_CLR_GONE       = QColor("#6E5A8C")   # 다크 테마 흰 글자 대비용 보라
 _CLR_DELTA_UP   = QColor("#D32F2F")
 _CLR_DELTA_DOWN = QColor("#1565C0")
 
@@ -137,6 +137,12 @@ class MainView(QWidget):
     def _render(self, snapshot: MemInfoSnapshot) -> None:
         sorted_snap = sort_snapshot(snapshot, self._sort_key, self._sort_order)
 
+        # 스크롤 위치 저장 (재렌더 후 화면 위치 유지)
+        vbar = self.tree.verticalScrollBar()
+        hbar = self.tree.horizontalScrollBar()
+        saved_v = vbar.value()
+        saved_h = hbar.value()
+
         self.tree.blockSignals(True)
         self.tree.clear()
 
@@ -144,6 +150,10 @@ class MainView(QWidget):
             self._add_adj_group(group)
 
         self.tree.blockSignals(False)
+
+        # 스크롤 위치 복원 (범위 초과 시 Qt가 자동 클램프)
+        vbar.setValue(saved_v)
+        hbar.setValue(saved_h)
 
     def _add_adj_group(self, group) -> None:
         is_flat = (group.adj_category == FLAT_CATEGORY)

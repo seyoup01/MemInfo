@@ -4,9 +4,9 @@ from PyQt6.QtWidgets import (
 )
 
 # 표시 레이블 → 실제 초 매핑
+# dumpsys meminfo 가 느린 기기에서 부정확한 결과를 내지 않도록 5초 미만은 제외
 _INTERVAL_MAP: dict[str, int] = {
-    "1s": 1, "2s": 2, "3s": 3, "4s": 4, "5s": 5,
-    "10s": 10, "20s": 20, "30s": 30,
+    "5s": 5, "10s": 10, "20s": 20, "30s": 30,
     "1분": 60, "5분": 300, "10분": 600,
 }
 _INTERVAL_LABELS = list(_INTERVAL_MAP.keys())

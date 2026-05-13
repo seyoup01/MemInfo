@@ -204,3 +204,96 @@ def test_spec_file_exists():
         "MemInfoMonitor.spec"
     )
     assert os.path.exists(spec), f".spec 파일 없음: {spec}"
+
+
+# ── PollingWorker 완료성 검증 + 즉시 재시도 ──────────────────────────────────
+
+class _AlwaysIncompleteAdb:
+    """항상 Tuning: 라인이 없는 불완전한 응답을 반환하는 Mock."""
+    def __init__(self):
+        self.calls = 0
+    def run_meminfo(self, serial):
+        self.calls += 1
+        return "Total PSS by OOM adjustment:\n  100K: Native\n"  # Tuning 없음
+
+
+class _OnceIncompleteThenCompleteAdb:
+    """첫 호출은 불완전, 이후는 Tuning: 라인 포함 완전 응답."""
+    def __init__(self):
+        self.calls = 0
+    def run_meminfo(self, serial):
+        self.calls += 1
+        if self.calls == 1:
+            return "Total PSS by OOM adjustment:\n"
+        with open(FIXTURE, encoding="utf-8") as f:
+            return f.read() + "\n   Tuning: 512 (large 512), oom 322,560K\n"
+
+
+def test_polling_worker_skips_interval_on_incomplete():
+    """불완전 응답 시 폴링 주기를 SKIP 하고 즉시 재시도해야 한다."""
+    from core.polling_worker import PollingWorker
+    from core.meminfo_parser import parse
+
+    adb = _AlwaysIncompleteAdb()
+    worker = PollingWorker(adb, parse, "dev", interval_sec=999)
+
+    errors = []
+    worker.error_occurred.connect(lambda m: errors.append(m))
+    worker.start()
+
+    # 0.4초 동안 여러 번 재시도가 발생해야 한다 (interval=999s 무시)
+    deadline = time.time() + 0.4
+    while time.time() < deadline:
+        _app.processEvents()
+        time.sleep(0.02)
+    worker.stop()
+
+    assert adb.calls >= 3, f"즉시 재시도 누락: {adb.calls}회 호출"
+    assert any("불완전" in m or "받지 못했습니다" in m for m in errors)
+
+
+def test_polling_worker_completes_with_tuning_line():
+    """Tuning: 라인 포함 응답은 정상 파싱·emit 되어야 한다."""
+    from core.polling_worker import PollingWorker
+    from core.meminfo_parser import parse
+
+    adb = _OnceIncompleteThenCompleteAdb()
+    worker = PollingWorker(adb, parse, "dev", interval_sec=999)
+
+    snaps = []
+    worker.snapshot_ready.connect(lambda s: snaps.append(s))
+    worker.start()
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline and not snaps:
+        _app.processEvents()
+        time.sleep(0.02)
+    worker.stop()
+
+    assert snaps, "Tuning: 라인 포함 응답이 emit 되지 않음"
+    assert snaps[0].total_process_count > 0
+
+
+def test_polling_worker_backoff_after_consecutive_failures():
+    """연속 5회 실패 후에는 즉시 재시도 대신 백오프가 발생해야 한다."""
+    from core.polling_worker import (
+        PollingWorker, _MAX_CONSECUTIVE_INCOMPLETE, _BACKOFF_ON_INCOMPLETE_SEC,
+    )
+    from core.meminfo_parser import parse
+
+    adb = _AlwaysIncompleteAdb()
+    worker = PollingWorker(adb, parse, "dev", interval_sec=999)
+    worker.start()
+
+    # MAX 만큼 호출까지는 즉시 재시도, 이후엔 백오프 → 호출 빈도 급감
+    deadline = time.time() + (_BACKOFF_ON_INCOMPLETE_SEC + 0.5)
+    while time.time() < deadline:
+        _app.processEvents()
+        time.sleep(0.02)
+    worker.stop()
+
+    # 백오프 없으면 100회+ 호출되겠지만, 백오프 적용 시 훨씬 적게 호출됨
+    assert adb.calls >= _MAX_CONSECUTIVE_INCOMPLETE, \
+        f"최소 {_MAX_CONSECUTIVE_INCOMPLETE}회 호출 기대, 실제 {adb.calls}회"
+    assert adb.calls < 50, \
+        f"백오프가 적용되지 않은 듯: {adb.calls}회 호출"

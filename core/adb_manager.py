@@ -42,19 +42,21 @@ class AdbDevice:
 class AdbManager:
     """실제 ADB 실행 파일을 subprocess로 호출하는 매니저."""
 
-    TIMEOUT = 5  # 초
+    # dumpsys meminfo 는 부하 큰 기기에서 15초 이상 걸릴 수 있어 30초로 설정
+    TIMEOUT       = 30   # run_meminfo 전용
+    TIMEOUT_SHORT = 5    # devices/getprop/echo 등 즉답 명령용
 
     def __init__(self):
         self._adb = resolve_adb_path()
 
-    def _run(self, *args) -> str:
+    def _run(self, *args, timeout: int | None = None) -> str:
         """ADB 명령 실행. 실패/타임아웃 시 빈 문자열 반환."""
         try:
             result = subprocess.run(
                 [self._adb, *args],
                 capture_output=True,
                 text=True,
-                timeout=self.TIMEOUT,
+                timeout=timeout if timeout is not None else self.TIMEOUT_SHORT,
             )
             return result.stdout
         except subprocess.TimeoutExpired:
@@ -64,7 +66,7 @@ class AdbManager:
 
     def get_devices(self) -> list[AdbDevice]:
         """연결된 기기 목록 반환. 각 기기의 모델명도 조회."""
-        output = self._run("devices")
+        output = self._run("devices", timeout=self.TIMEOUT_SHORT)
         devices: list[AdbDevice] = []
 
         for line in output.splitlines():
@@ -85,17 +87,26 @@ class AdbManager:
         return devices
 
     def _get_model(self, serial: str) -> str:
-        raw = self._run("-s", serial, "shell", "getprop", "ro.product.model")
+        raw = self._run(
+            "-s", serial, "shell", "getprop", "ro.product.model",
+            timeout=self.TIMEOUT_SHORT,
+        )
         return raw.strip() or "Unknown"
 
     def test_connection(self, serial: str) -> bool:
         """기기와 통신 가능한지 echo 명령으로 확인."""
-        raw = self._run("-s", serial, "shell", "echo", "ok")
+        raw = self._run(
+            "-s", serial, "shell", "echo", "ok",
+            timeout=self.TIMEOUT_SHORT,
+        )
         return raw.strip() == "ok"
 
     def run_meminfo(self, serial: str) -> str:
         """dumpsys meminfo 실행. 실패 시 빈 문자열 반환 (예외 상위 전파 금지)."""
-        return self._run("-s", serial, "shell", "dumpsys", "meminfo")
+        return self._run(
+            "-s", serial, "shell", "dumpsys", "meminfo",
+            timeout=self.TIMEOUT,
+        )
 
     def is_device_online(self, serial: str) -> bool:
         return self.test_connection(serial)
@@ -146,9 +157,13 @@ class MockAdbManager:
     def run_meminfo(self, serial: str) -> str:
         try:
             with open(self._FIXTURE, encoding="utf-8") as f:
-                return f.read()
+                raw = f.read()
         except FileNotFoundError:
             return ""
+        # 픽스처에 Tuning: 라인이 없으면 PollingWorker 완료성 검증을 위해 append
+        if "Tuning:" not in raw:
+            raw = raw.rstrip() + "\n   Tuning: 512 (large 512), oom 322,560K\n"
+        return raw
 
     def test_connection(self, serial: str) -> bool:
         return True

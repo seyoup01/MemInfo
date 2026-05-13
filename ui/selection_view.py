@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import (
 
 from core.data_models import MemInfoSnapshot, ProcessEntry
 
-_CLR_GONE      = QColor("#FFEBEE")
-_CLR_RESTARTED = QColor("#E3F2FD")
+_CLR_GONE      = QColor("#6E5A8C")   # 다크 테마 흰 글자 대비용 보라
+_CLR_RESTARTED = QColor("#1565C0")   # 다크 테마 흰 글자 대비용 진파랑
 
 _COL_PKG    = 0
 _COL_PID    = 1
