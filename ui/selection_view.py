@@ -37,8 +37,9 @@ def _format_size(kb: int) -> str:
 
 
 class SelectionView(QWidget):
-    chart_requested   = pyqtSignal(list)   # "차트 보기 ▶" 버튼 (탭 전환용)
-    selection_changed = pyqtSignal(list)   # 체크박스/전체선택 등 선택 변화 즉시 emit
+    chart_requested      = pyqtSignal(list)   # "차트 보기 ▶" 버튼 (탭 전환용)
+    selection_changed    = pyqtSignal(list)   # 체크박스/전체선택 등 선택 변화 즉시 emit
+    fast_chart_requested = pyqtSignal(list)   # "차트 빠르게 Update" — [(pkg, pid), ...]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -95,16 +96,19 @@ class SelectionView(QWidget):
         btn_load  = QPushButton("불러오기")
         btn_clear = QPushButton("초기화")
         btn_chart = QPushButton("차트 보기 ▶")
+        self._btn_fast = QPushButton("차트 빠르게 Update")
         btn_save.clicked.connect(self._save_selection)
         btn_load.clicked.connect(self._load_selection)
         btn_clear.clicked.connect(self._clear_selection)
         btn_chart.clicked.connect(
             lambda: self.chart_requested.emit(self.selected_packages)
         )
+        self._btn_fast.clicked.connect(self._emit_fast_chart)
         top_btns.addWidget(btn_save)
         top_btns.addWidget(btn_load)
         top_btns.addWidget(btn_clear)
         top_btns.addWidget(btn_chart)
+        top_btns.addWidget(self._btn_fast)
         top_btns.addStretch()
 
         self._lbl_sel_count = QLabel("선택: 0개")
@@ -276,6 +280,16 @@ class SelectionView(QWidget):
                 if bg is not None:
                     cell.setBackground(QBrush(bg))
                 self._table.setItem(row, col, cell)
+
+    def _emit_fast_chart(self):
+        """선택된 (package, pid) 쌍을 fast_chart_requested 로 emit."""
+        pairs: list[tuple[str, int]] = []
+        for pkg in self.selected_packages:
+            proc = self._all_procs.get(pkg) or self._gone_procs.get(pkg)
+            if proc is not None:
+                pairs.append((pkg, proc.pid))
+        if pairs:
+            self.fast_chart_requested.emit(pairs)
 
     def _refresh_sum_label(self):
         """선택된 프로세스의 PSS 합계 (현재 스냅샷 기준, 종료된 항목은 마지막값)."""

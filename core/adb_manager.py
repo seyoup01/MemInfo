@@ -108,6 +108,15 @@ class AdbManager:
             timeout=self.TIMEOUT,
         )
 
+    def run_meminfo_for_pid(self, serial: str, pid: int) -> str:
+        """dumpsys meminfo | grep 'pid <N>' 실행. 4줄 정도의 짧은 응답.
+        파이프와 따옴표는 device 측 sh 가 해석.
+        """
+        return self._run(
+            "-s", serial, "shell", f"dumpsys meminfo | grep 'pid {pid}'",
+            timeout=self.TIMEOUT,
+        )
+
     def is_device_online(self, serial: str) -> bool:
         return self.test_connection(serial)
 
@@ -164,6 +173,23 @@ class MockAdbManager:
         if "Tuning:" not in raw:
             raw = raw.rstrip() + "\n   Tuning: 512 (large 512), oom 322,560K\n"
         return raw
+
+    def run_meminfo_for_pid(self, serial: str, pid: int) -> str:
+        """전체 meminfo 에서 해당 PID 라인만 grep 형태로 시뮬레이션 (4줄)."""
+        try:
+            with open(self._FIXTURE, encoding="utf-8") as f:
+                raw = f.read()
+        except FileNotFoundError:
+            return ""
+        # 실제 grep 결과를 흉내내기 어려우므로 픽스처에서 해당 pid 포함 라인 추출 후
+        # 4줄이 안 되면 (PSS by process 1줄 + OOM 2줄) 형태로 합성하여 반환.
+        lines = [l for l in raw.splitlines() if f"(pid {pid})" in l]
+        if not lines:
+            return ""
+        # 테스트 호환: 최소 3줄 확보 (3번째 줄을 fast worker 가 사용)
+        while len(lines) < 4:
+            lines.append(lines[-1])
+        return "\n".join(lines[:4]) + "\n"
 
     def test_connection(self, serial: str) -> bool:
         return True

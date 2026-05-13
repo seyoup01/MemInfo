@@ -14,6 +14,7 @@ from core.meminfo_parser import parse as meminfo_parse
 from core.polling_worker import PollingWorker
 from ui.alert_log_panel import AlertLogPanel
 from ui.chart_view import ChartView
+from ui.fast_update_window import FastUpdateWindow
 from ui.main_view import MainView
 from ui.selection_view import SelectionView
 from ui.status_bar import StatusBar
@@ -30,6 +31,8 @@ class MainWindow(QMainWindow):
         self._adb, self._adb_mock = self._create_adb_manager()
         self._worker: PollingWorker | None           = None
         self._reconnect: ReconnectWorker | None      = None
+        self._fast_win: FastUpdateWindow | None      = None
+        self._fast_was_running                       = False
         self._collection_num    = 0
         self._start_time: float | None = None
         self._paused            = False
@@ -163,6 +166,8 @@ class MainWindow(QMainWindow):
         self.selection_view.chart_requested.connect(self._on_chart_requested)
         # Process Select 의 체크박스 변경이 즉시 Chart 에 반영되도록 자동 동기화
         self.selection_view.selection_changed.connect(self._on_selection_changed)
+        # 차트 빠르게 Update — 별도 윈도우
+        self.selection_view.fast_chart_requested.connect(self._on_fast_chart_requested)
 
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
@@ -295,6 +300,30 @@ class MainWindow(QMainWindow):
                 self.tabs.setCurrentIndex(i)
                 break
 
+    def _on_fast_chart_requested(self, pairs: list):
+        """'차트 빠르게 Update': 메인 폴링 중단 + 별도 윈도우로 grep 병렬 폴링."""
+        if not pairs:
+            return
+        if self._fast_win is not None:
+            self._fast_win.raise_()
+            self._fast_win.activateWindow()
+            return
+
+        self._fast_was_running = bool(self._worker and self._worker.isRunning())
+        self._stop_worker()                # 전체 dumpsys 폴링 중단
+
+        serial = self.toolbar.current_serial()
+        self._fast_win = FastUpdateWindow(self._adb, serial, pairs, self)
+        self._fast_win.closed.connect(self._on_fast_window_closed)
+        self._fast_win.show()
+
+    def _on_fast_window_closed(self):
+        """fast 윈도우가 닫혔을 때 — 이전에 폴링 중이었다면 재개."""
+        self._fast_win = None
+        if self._fast_was_running:
+            self._fast_was_running = False
+            self._start_worker()
+
     # ── 메뉴 액션 핸들러 ─────────────────────────────────────────────────────
 
     def _reload_adb(self):
@@ -380,6 +409,13 @@ class MainWindow(QMainWindow):
     # ── 창 닫기 ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        # fast update 윈도우가 열려 있으면 함께 정리
+        if self._fast_win is not None:
+            try:
+                self._fast_win.close()
+            except Exception:
+                pass
+            self._fast_win = None
         self._stop_worker()
         if self._reconnect and self._reconnect.isRunning():
             self._reconnect.terminate()
