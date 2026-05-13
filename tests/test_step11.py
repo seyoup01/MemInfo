@@ -50,14 +50,42 @@ def test_parse_grep_third_line_extracts_memory():
     assert result == ("com.nhn.android.search", 23280, 25820)
 
 
-def test_parse_grep_skips_when_too_short():
-    """라인 수가 3 미만이면 None."""
-    from core.fast_polling_worker import parse_grep_third_line
-    assert parse_grep_third_line("") is None
-    assert parse_grep_third_line("a\nb\n") is None
-    assert parse_grep_third_line(
-        "     12K: foo (pid 1)\n     34K: foo (pid 1)\n"
-    ) is None
+def test_parse_grep_returns_none_when_no_line_matches():
+    """매칭되는 라인이 하나도 없을 때만 None 반환."""
+    from core.fast_polling_worker import parse_grep_response
+    assert parse_grep_response("") is None
+    assert parse_grep_response("garbage\nstuff\n") is None
+
+
+def test_parse_grep_response_falls_back_to_any_line():
+    """3번째 라인이 없어도 매칭 가능한 라인이 있으면 추출."""
+    from core.fast_polling_worker import parse_grep_response
+    # 1줄짜리 응답
+    one_line = "     25,820K: com.x (pid 123)\n"
+    assert parse_grep_response(one_line) == ("com.x", 123, 25820)
+    # 2줄 — 둘 다 매칭, 마지막 채택
+    two = ("     11,111K: com.a (pid 5)\n"
+           "     22,222K: com.a (pid 5)\n")
+    pkg, pid, mem = parse_grep_response(two)
+    assert mem == 22222
+
+
+def test_parse_grep_response_picks_third_when_available():
+    """4줄 응답이면 3번째 라인 우선 (사용자 명시 OOM ADJ 헤더)."""
+    from core.fast_polling_worker import parse_grep_response
+    raw = (
+        "     35,864K: com.s (pid 23280)\n"
+        "         35,864K: com.s (pid 23280)\n"
+        "     25,820K: com.s (pid 23280)\n"
+        "         25,820K: com.s (pid 23280)\n"
+    )
+    assert parse_grep_response(raw) == ("com.s", 23280, 25820)
+
+
+def test_parse_grep_third_line_alias_still_exists():
+    """하위 호환: parse_grep_third_line 이름도 사용 가능해야."""
+    from core.fast_polling_worker import parse_grep_third_line, parse_grep_response
+    assert parse_grep_third_line is parse_grep_response
 
 
 # ── FastPollingWorker ─────────────────────────────────────────────────────────
@@ -265,3 +293,103 @@ def test_main_window_no_resume_if_was_not_running():
     # _start_worker 호출 카운트를 위해 monkeypatch 없이 worker 상태만 검증
     w._on_fast_window_closed()
     assert w._worker is None
+
+
+# ── 진단: 파싱 실패 시 error_occurred 발생 ──────────────────────────────────
+
+class _UnparseableAdb:
+    def run_meminfo_for_pid(self, serial, pid):
+        return "this output\ncannot match the expected line format\n"
+
+
+def test_fast_polling_emits_error_with_raw_excerpt_on_failure():
+    from core.fast_polling_worker import FastPollingWorker
+    worker = FastPollingWorker(_UnparseableAdb(), "dev", [("a", 1)], interval_sec=1)
+    errors = []
+    worker.error_occurred.connect(lambda m: errors.append(m))
+    worker.start()
+    _wait_for(lambda: len(errors) >= 1, timeout=2.0)
+    worker.stop()
+    assert any("PID 1" in e and ("cannot match" in e or "this output" in e)
+               for e in errors), f"진단 메시지 미발생: {errors}"
+
+
+class _EmptyAdb:
+    def run_meminfo_for_pid(self, serial, pid):
+        return ""
+
+
+def test_fast_polling_emits_empty_response_diagnostic():
+    from core.fast_polling_worker import FastPollingWorker
+    worker = FastPollingWorker(_EmptyAdb(), "dev", [("a", 7)], interval_sec=1)
+    errors = []
+    worker.error_occurred.connect(lambda m: errors.append(m))
+    worker.start()
+    _wait_for(lambda: len(errors) >= 1, timeout=2.0)
+    worker.stop()
+    assert any("PID 7" in e and "empty" in e.lower() for e in errors), \
+        f"empty 진단 미발생: {errors}"
+
+
+# ── AdbManager quote 폴백 ───────────────────────────────────────────────────
+
+def test_adb_run_meminfo_for_pid_tries_double_quote_first(monkeypatch):
+    """첫 시도가 큰따옴표 패턴이어야 한다 (Windows + adb 호환성)."""
+    from core.adb_manager import AdbManager
+
+    # AdbManager 인스턴스 생성을 회피하기 위해 클래스에 직접 patch
+    calls = []
+    def fake_run(self, *args, timeout=None):
+        calls.append(args)
+        return ""   # 모두 빈 응답 → 두 패턴 모두 시도
+
+    monkeypatch.setattr(AdbManager, "_run", fake_run)
+    monkeypatch.setattr(AdbManager, "__init__", lambda self: None)
+
+    mgr = AdbManager()
+    mgr._adb = "adb"   # 임의값
+    mgr.run_meminfo_for_pid("dev", 23280)
+
+    assert len(calls) >= 1
+    first_cmd = calls[0][3]   # "-s", "dev", "shell", <cmd>
+    assert '"pid 23280"' in first_cmd, f"첫 시도 큰따옴표 아님: {first_cmd}"
+
+
+def test_adb_run_meminfo_for_pid_falls_back_to_single_quote(monkeypatch):
+    """큰따옴표 응답이 빈 경우 작은따옴표로 폴백."""
+    from core.adb_manager import AdbManager
+
+    calls = []
+    def fake_run(self, *args, timeout=None):
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(AdbManager, "_run", fake_run)
+    monkeypatch.setattr(AdbManager, "__init__", lambda self: None)
+
+    mgr = AdbManager()
+    mgr._adb = "adb"
+    mgr.run_meminfo_for_pid("dev", 23280)
+
+    assert len(calls) == 2, f"폴백 시도 안 함: {calls}"
+    second_cmd = calls[1][3]
+    assert "'pid 23280'" in second_cmd, f"폴백이 작은따옴표 아님: {second_cmd}"
+
+
+# ── FastUpdateWindow status bar 진단 ──────────────────────────────────────
+
+def test_fast_update_window_status_bar_updates_on_snapshot(sample_snapshot):
+    """스냅샷 수신 후 status bar 에 '응답 N/M' 형식 포함."""
+    from core.adb_manager import MockAdbManager
+    from ui.fast_update_window import FastUpdateWindow
+
+    win = FastUpdateWindow(MockAdbManager(), "dev",
+                           [("com.android.systemui", 1234)])
+    try:
+        # 워커 시작 후 첫 스냅샷이 도착할 때까지 짧게 대기
+        _wait_for(lambda: "응답" in win._status.currentMessage(), timeout=3.0)
+        msg = win._status.currentMessage()
+        assert "응답" in msg, f"상태바: {msg!r}"
+        assert "/1" in msg or "1/1" in msg, f"카운트 없음: {msg!r}"
+    finally:
+        win.close()

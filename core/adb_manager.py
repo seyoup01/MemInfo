@@ -109,13 +109,19 @@ class AdbManager:
         )
 
     def run_meminfo_for_pid(self, serial: str, pid: int) -> str:
-        """dumpsys meminfo | grep 'pid <N>' 실행. 4줄 정도의 짧은 응답.
-        파이프와 따옴표는 device 측 sh 가 해석.
+        """dumpsys meminfo | grep "pid <N>" 실행. 4줄 정도의 짧은 응답.
+
+        Windows + adb + device shell 파이프라인에서 quote 가 깨질 수 있어
+        큰따옴표 → 작은따옴표 순으로 시도.
         """
-        return self._run(
-            "-s", serial, "shell", f"dumpsys meminfo | grep 'pid {pid}'",
-            timeout=self.TIMEOUT,
-        )
+        for pattern in (
+            f'dumpsys meminfo | grep "pid {pid}"',
+            f"dumpsys meminfo | grep 'pid {pid}'",
+        ):
+            raw = self._run("-s", serial, "shell", pattern, timeout=self.TIMEOUT)
+            if raw and raw.strip():
+                return raw
+        return ""
 
     def is_device_online(self, serial: str) -> bool:
         return self.test_connection(serial)

@@ -4,6 +4,8 @@
 내부 ChartView 에 누적한다. 닫히면 `closed` 시그널을 emit 하여 메인 윈도우가
 정상 폴링을 재개할 수 있게 한다.
 """
+from datetime import datetime
+
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QMainWindow, QStatusBar,
@@ -95,8 +97,19 @@ class FastUpdateWindow(QMainWindow):
             f"{label} 주기로 빠르게 폴링 중"
         )
 
+    def _on_snapshot(self, snap):
+        """워커 응답 수신: 차트에 추가 + status bar 진단 갱신."""
+        self._chart.add_data_point(snap)
+        n_recv  = snap.total_process_count
+        n_total = len(self._procs)
+        ts      = datetime.fromtimestamp(snap.timestamp).strftime("%H:%M:%S")
+        self._status.showMessage(
+            f"최근 업데이트 {ts}  |  응답 {n_recv}/{n_total}  |  "
+            f"{self._interval_combo.currentText()} 주기"
+        )
+
     def _on_error(self, msg: str):
-        self._status.showMessage(f"오류: {msg}", 3000)
+        self._status.showMessage(f"오류: {msg}", 5000)
 
     # ── 워커 관리 ─────────────────────────────────────────────────────────────
 
@@ -105,7 +118,7 @@ class FastUpdateWindow(QMainWindow):
         self._worker = FastPollingWorker(
             self._adb, self._serial, self._procs, sec
         )
-        self._worker.snapshot_ready.connect(self._chart.add_data_point)
+        self._worker.snapshot_ready.connect(self._on_snapshot)
         self._worker.error_occurred.connect(self._on_error)
         self._worker.start()
 

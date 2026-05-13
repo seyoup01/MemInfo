@@ -21,23 +21,42 @@ _FAST_ADJ_CATEGORY = "FastUpdate"
 _FAST_ADJ_ORDER    = 99
 
 
-def parse_grep_third_line(raw: str) -> tuple[str, int, int] | None:
-    """grep 결과에서 3번째 라인을 파싱하여 (package, pid, memory_kb) 반환.
-
-    응답 라인 수가 3 미만이거나 매칭 실패 시 None.
-    """
-    if not raw:
-        return None
-    lines = [l for l in raw.splitlines() if l.strip()]
-    if len(lines) < 3:
-        return None
-    m = _LINE_RE.match(lines[2])
-    if not m:
-        return None
+def _extract(m: re.Match) -> tuple[str, int, int]:
     mem_kb = int(m.group(1).replace(",", ""))
     pkg    = m.group(2).strip()
     pid    = int(m.group(3))
     return (pkg, pid, mem_kb)
+
+
+def parse_grep_response(raw: str) -> tuple[str, int, int] | None:
+    """grep 응답에서 (package, pid, memory_kb) 추출.
+
+    선호 순서:
+      1) 3번째 라인 (사용자 명시 — OOM ADJ 헤더 라인)
+      2) 매칭 가능한 마지막 라인
+      3) 매칭 가능한 어떤 라인
+    매칭되는 라인이 하나도 없으면 None.
+    """
+    if not raw:
+        return None
+    lines = [l for l in raw.splitlines() if l.strip()]
+
+    # 1순위: 3번째 라인
+    if len(lines) >= 3:
+        m = _LINE_RE.match(lines[2])
+        if m:
+            return _extract(m)
+
+    # 2순위: 매칭되는 마지막 라인
+    for line in reversed(lines):
+        m = _LINE_RE.match(line)
+        if m:
+            return _extract(m)
+    return None
+
+
+# 하위 호환 alias
+parse_grep_third_line = parse_grep_response
 
 
 class FastPollingWorker(QThread):
@@ -103,8 +122,14 @@ class FastPollingWorker(QThread):
 
     def _fetch_one(self, pkg: str, pid: int) -> tuple[str, int, int] | None:
         raw = self._adb.run_meminfo_for_pid(self._serial, pid)
-        parsed = parse_grep_third_line(raw)
+        parsed = parse_grep_response(raw)
         if parsed is None:
+            # 진단: 빈 응답인지 / 응답은 왔는데 파싱 불가인지 구별 가능한 메시지
+            snippet = (
+                raw[:160].replace("\n", " | ").strip()
+                if raw else "<empty response>"
+            )
+            self.error_occurred.emit(f"PID {pid} 파싱 실패: {snippet}")
             return None
         # pkg 파라미터를 우선 보존 (grep 결과의 package 가 잘려있을 수 있음)
         _, _, mem_kb = parsed
