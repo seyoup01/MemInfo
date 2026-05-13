@@ -147,6 +147,62 @@ def test_threshold_unit_toggle_mb_to_kb():
     assert tv.threshold_kb == 100 * 1024
 
 
+# ── 퀵 버튼 클릭 체인 검증 ────────────────────────────────────────────────────
+
+def test_quick_button_sets_threshold_kb_in_kb_mode():
+    """KB 모드에서 10MB 버튼 → threshold_kb = 10240, spin = 10240."""
+    from ui.threshold_view import ThresholdView, _KB_PER_MB
+    tv = ThresholdView()
+    assert tv._unit == "KB"
+    tv._set_threshold_mb(10)
+    assert tv._threshold_kb == 10 * _KB_PER_MB, f"threshold_kb={tv._threshold_kb}"
+    assert tv._spin.value() == 10 * _KB_PER_MB, f"spin={tv._spin.value()}"
+
+
+def test_quick_button_sets_threshold_kb_in_mb_mode():
+    """MB 모드에서 50MB 버튼 → threshold_kb = 51200, spin = 50."""
+    from ui.threshold_view import ThresholdView, _KB_PER_MB
+    tv = ThresholdView()
+    tv._rb_mb.setChecked(True)
+    tv._set_threshold_mb(50)
+    assert tv._threshold_kb == 50 * _KB_PER_MB, f"threshold_kb={tv._threshold_kb}"
+    assert tv._spin.value() == 50, f"spin={tv._spin.value()}"
+
+
+def test_quick_button_filters_data(sample_snapshot):
+    """10MB 버튼 클릭 후 데이터 업데이트 → 임계값 이상 프로세스만 표시."""
+    from ui.threshold_view import ThresholdView, _KB_PER_MB
+    tv = ThresholdView()
+    tv.update_data(sample_snapshot)
+    tv._set_threshold_mb(10)
+    assert tv._threshold_kb == 10 * _KB_PER_MB
+    _, total, shown = tv._apply_filter(sample_snapshot)
+    assert shown == 3, f"10MB 필터 결과: {shown}개 (기대값: 3개)"
+    assert total == sample_snapshot.total_process_count
+
+
+def test_set_threshold_kb_zero_shows_all(sample_snapshot):
+    """전체 보기(_set_threshold_kb(0)) → 모든 프로세스 표시."""
+    from ui.threshold_view import ThresholdView
+    tv = ThresholdView()
+    tv.update_data(sample_snapshot)
+    tv._set_threshold_kb(0)
+    assert tv._threshold_kb == 0
+    assert tv._spin.value() == 0
+    _, total, shown = tv._apply_filter(sample_snapshot)
+    assert shown == total
+
+
+def test_quick_button_same_value_twice(sample_snapshot):
+    """같은 버튼 두 번 클릭 시에도 threshold_kb는 유지."""
+    from ui.threshold_view import ThresholdView, _KB_PER_MB
+    tv = ThresholdView()
+    tv.update_data(sample_snapshot)
+    tv._set_threshold_mb(100)
+    tv._set_threshold_mb(100)   # 같은 값 재클릭
+    assert tv._threshold_kb == 100 * _KB_PER_MB
+
+
 # ── SelectionView import ──────────────────────────────────────────────────────
 
 def test_selection_view_imports():

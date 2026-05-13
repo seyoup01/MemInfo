@@ -85,17 +85,17 @@ class ThresholdView(QWidget):
     # ── 이벤트 슬롯 ──────────────────────────────────────────────────────────
 
     def _on_spin_changed(self, value: int):
+        self._threshold_kb = value * _KB_PER_MB if self._unit == "MB" else value
         self._slider.blockSignals(True)
         self._slider.setValue(value)
         self._slider.blockSignals(False)
-        self._threshold_kb = value * _KB_PER_MB if self._unit == "MB" else value
         self._rerender()
 
     def _on_slider_changed(self, value: int):
+        self._threshold_kb = value * _KB_PER_MB if self._unit == "MB" else value
         self._spin.blockSignals(True)
         self._spin.setValue(value)
         self._spin.blockSignals(False)
-        self._threshold_kb = value * _KB_PER_MB if self._unit == "MB" else value
         self._rerender()
 
     def _on_unit_toggled(self, btn_id: int, checked: bool):
@@ -108,9 +108,6 @@ class ThresholdView(QWidget):
         old_kb     = self._threshold_kb
         self._unit = new_unit
 
-        self._spin.blockSignals(True)
-        self._slider.blockSignals(True)
-
         if new_unit == "MB":
             display_val        = max(0, old_kb // _KB_PER_MB)
             self._threshold_kb = display_val * _KB_PER_MB
@@ -121,24 +118,37 @@ class ThresholdView(QWidget):
             self._spin.setRange(0, 10_000_000)
             self._slider.setRange(0, 10_000_000)
 
+        self._spin.blockSignals(True)
+        self._slider.blockSignals(True)
         self._spin.setValue(display_val)
         self._slider.setValue(display_val)
-
         self._spin.blockSignals(False)
         self._slider.blockSignals(False)
         self._rerender()
 
     def _set_threshold_mb(self, mb: int):
-        if self._unit == "MB":
-            self._spin.setValue(mb)
-        else:
-            self._spin.setValue(mb * _KB_PER_MB)
+        """퀵 버튼 클릭: MB 단위로 임계값 직접 설정."""
+        self._threshold_kb = mb * _KB_PER_MB
+        display_val = mb if self._unit == "MB" else mb * _KB_PER_MB
+        self._spin.blockSignals(True)
+        self._slider.blockSignals(True)
+        self._spin.setValue(display_val)
+        self._slider.setValue(display_val)
+        self._spin.blockSignals(False)
+        self._slider.blockSignals(False)
+        self._rerender()
 
     def _set_threshold_kb(self, kb: int):
-        if self._unit == "KB":
-            self._spin.setValue(kb)
-        else:
-            self._spin.setValue(kb // _KB_PER_MB)
+        """전체 보기 등 KB 단위로 임계값 직접 설정."""
+        self._threshold_kb = kb
+        display_val = kb // _KB_PER_MB if self._unit == "MB" else kb
+        self._spin.blockSignals(True)
+        self._slider.blockSignals(True)
+        self._spin.setValue(display_val)
+        self._slider.setValue(display_val)
+        self._spin.blockSignals(False)
+        self._slider.blockSignals(False)
+        self._rerender()
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
 
