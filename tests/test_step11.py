@@ -91,19 +91,28 @@ def test_parse_grep_third_line_alias_still_exists():
 # ── FastPollingWorker ─────────────────────────────────────────────────────────
 
 class _FastAdbMock:
-    """run_meminfo_for_pid 호출을 카운트하는 Mock. PID 별 고정값 반환."""
-    def __init__(self, pid_mem: dict[int, int]):
-        self._pid_mem = pid_mem
+    """run_meminfo_for_package 호출을 카운트하는 Mock.
+
+    `pid_mem` dict 의 키가 PID, 값이 memory_kb. 패키지명은 호출 시점에 동적 매칭.
+    """
+    def __init__(self, pid_mem: dict[int, int], pkg_for_pid: dict[int, str] | None = None):
+        self._pid_mem    = pid_mem
+        self._pkg_for_pid = pkg_for_pid or {}
         self.calls = 0
 
-    def run_meminfo_for_pid(self, serial, pid):
+    def run_meminfo_for_package(self, serial, package):
         self.calls += 1
-        mem = self._pid_mem.get(pid, 0)
-        # 4줄 형태로 합성 (3번째가 OOM)
-        if mem == 0:
-            return ""
-        line = f"     {mem:,}K: pkg{pid} (pid {pid})"
-        return f"{line}\n    {line}\n{line}\n    {line}\n"
+        out = []
+        # 요청된 package 에 해당하는 PID 의 라인만 4줄(3번째가 OOM) 형태로 합성
+        for pid, mem in self._pid_mem.items():
+            if mem == 0:
+                continue
+            pkg_for_this_pid = self._pkg_for_pid.get(pid, package)
+            if pkg_for_this_pid != package:
+                continue
+            for _ in range(4):
+                out.append(f"     {mem:,}K: {package} (pid {pid})")
+        return "\n".join(out) + "\n" if out else ""
 
 
 def _wait_for(predicate, timeout=3.0):
@@ -118,7 +127,10 @@ def _wait_for(predicate, timeout=3.0):
 
 def test_fast_polling_emits_snapshot_with_all_selected_pids():
     from core.fast_polling_worker import FastPollingWorker
-    adb = _FastAdbMock({1001: 12345, 1002: 67890, 1003: 11111})
+    adb = _FastAdbMock(
+        {1001: 12345, 1002: 67890, 1003: 11111},
+        pkg_for_pid={1001: "a", 1002: "b", 1003: "c"},
+    )
     pairs = [("a", 1001), ("b", 1002), ("c", 1003)]
 
     worker = FastPollingWorker(adb, "dev", pairs, interval_sec=1)
@@ -164,7 +176,10 @@ def test_fast_polling_respects_interval():
 def test_fast_polling_skips_unparseable_pid():
     """grep 결과가 None 인 PID 는 결과에서 제외, 나머지는 정상 emit."""
     from core.fast_polling_worker import FastPollingWorker
-    adb = _FastAdbMock({1001: 12345, 1002: 0})   # 1002 는 빈 응답
+    adb = _FastAdbMock(
+        {1001: 12345, 1002: 0},
+        pkg_for_pid={1001: "a", 1002: "b"},
+    )
     pairs = [("a", 1001), ("b", 1002)]
     worker = FastPollingWorker(adb, "dev", pairs, interval_sec=1)
     snaps = []
@@ -298,7 +313,7 @@ def test_main_window_no_resume_if_was_not_running():
 # ── 진단: 파싱 실패 시 error_occurred 발생 ──────────────────────────────────
 
 class _UnparseableAdb:
-    def run_meminfo_for_pid(self, serial, pid):
+    def run_meminfo_for_package(self, serial, package):
         return "this output\ncannot match the expected line format\n"
 
 
@@ -315,7 +330,7 @@ def test_fast_polling_emits_error_with_raw_excerpt_on_failure():
 
 
 class _EmptyAdb:
-    def run_meminfo_for_pid(self, serial, pid):
+    def run_meminfo_for_package(self, serial, package):
         return ""
 
 
@@ -393,3 +408,212 @@ def test_fast_update_window_status_bar_updates_on_snapshot(sample_snapshot):
         assert "/1" in msg or "1/1" in msg, f"카운트 없음: {msg!r}"
     finally:
         win.close()
+
+
+# ── 패키지명 grep (Step 2) ────────────────────────────────────────────────────
+
+def test_adb_run_meminfo_for_package_tries_double_quote_first(monkeypatch):
+    from core.adb_manager import AdbManager
+    calls = []
+    monkeypatch.setattr(AdbManager, "__init__", lambda self: None)
+    monkeypatch.setattr(AdbManager, "_run",
+                        lambda self, *args, timeout=None: (calls.append(args) or ""))
+    mgr = AdbManager()
+    mgr.run_meminfo_for_package("dev", "com.example.app")
+    assert len(calls) >= 1
+    first_cmd = calls[0][3]
+    assert '"com.example.app"' in first_cmd, f"첫 시도 큰따옴표 아님: {first_cmd}"
+
+
+def test_adb_run_meminfo_for_package_falls_back_to_single_quote(monkeypatch):
+    from core.adb_manager import AdbManager
+    calls = []
+    monkeypatch.setattr(AdbManager, "__init__", lambda self: None)
+    monkeypatch.setattr(AdbManager, "_run",
+                        lambda self, *args, timeout=None: (calls.append(args) or ""))
+    mgr = AdbManager()
+    mgr.run_meminfo_for_package("dev", "com.example.app")
+    assert len(calls) == 2, f"폴백 시도 안 함: {calls}"
+    second_cmd = calls[1][3]
+    assert "'com.example.app'" in second_cmd
+
+
+def test_mock_run_meminfo_for_package_filters_lines():
+    from core.adb_manager import MockAdbManager
+    mgr = MockAdbManager()
+    raw = mgr.run_meminfo_for_package("dev", "com.android.systemui")
+    lines = [l for l in raw.splitlines() if l.strip()]
+    # 픽스처에서 com.android.systemui 포함 라인만 반환
+    assert all("com.android.systemui" in l for l in lines)
+    assert len(lines) >= 1
+
+
+# ── 정확 매칭 필터 — substring/다른 PID 차단 ────────────────────────────────
+
+# 사용자 실측 예시 (com.nhn.android.search 패키지명 grep 결과 12줄)
+_REAL_RESPONSE_12LINES = """\
+    429,548K: com.nhn.android.search (pid 23195 / activities)
+    142,160K: com.nhn.android.search:privileged_process0 (pid 23503)
+     35,224K: com.nhn.android.search (pid 23280)
+         35,224K: com.nhn.android.search (pid 23280)
+        429,548K: com.nhn.android.search (pid 23195 / activities)
+        142,160K: com.nhn.android.search:privileged_process0 (pid 23503)
+    603,854K: com.nhn.android.search (pid 23195 / activities)
+    115,882K: com.nhn.android.search:privileged_process0 (pid 23503)
+     25,821K: com.nhn.android.search (pid 23280)
+         25,821K: com.nhn.android.search (pid 23280)
+        603,854K: com.nhn.android.search (pid 23195 / activities)
+        115,882K: com.nhn.android.search:privileged_process0 (pid 23503)
+"""
+
+
+class _FixedAdb:
+    """run_meminfo_for_package 가 고정된 응답을 반환하는 Mock."""
+    def __init__(self, response: str):
+        self._response = response
+        self.calls = 0
+    def run_meminfo_for_package(self, serial, package):
+        self.calls += 1
+        return self._response
+
+
+def test_fast_polling_filters_substring_package_matches():
+    """패키지명이 'com.nhn.android.search' 인데 응답에 같은 접두어를 가진
+    다른 프로세스(:privileged_process0)가 섞여 있어도 제외해야 한다."""
+    from core.fast_polling_worker import FastPollingWorker
+    adb = _FixedAdb(_REAL_RESPONSE_12LINES)
+    # pid 23280 만 선택
+    worker = FastPollingWorker(
+        adb, "dev", [("com.nhn.android.search", 23280)], interval_sec=1
+    )
+    snaps = []
+    worker.snapshot_ready.connect(lambda s: snaps.append(s))
+    worker.start()
+    _wait_for(lambda: len(snaps) >= 1, timeout=2.0)
+    worker.stop()
+
+    procs = [p for g in snaps[0].adj_groups for p in g.processes]
+    assert len(procs) == 1, f"정확히 1개 기대, 실제 {len(procs)}: {procs}"
+    p = procs[0]
+    assert p.package_name == "com.nhn.android.search"
+    assert p.pid == 23280
+    # 3번째 매칭 라인 값 (사용자 예시) = 25,821K
+    assert p.memory_kb == 25821, f"매칭 라인 추출 오류: {p.memory_kb}"
+
+
+def test_fast_polling_filters_different_pid_same_pkg():
+    """같은 패키지명 다른 PID (23195 / activities) 는 제외되어야 한다."""
+    from core.fast_polling_worker import FastPollingWorker
+    adb = _FixedAdb(_REAL_RESPONSE_12LINES)
+    # pid 23195 선택 — 다른 결과를 기대
+    worker = FastPollingWorker(
+        adb, "dev", [("com.nhn.android.search", 23195)], interval_sec=1
+    )
+    snaps = []
+    worker.snapshot_ready.connect(lambda s: snaps.append(s))
+    worker.start()
+    _wait_for(lambda: len(snaps) >= 1, timeout=2.0)
+    worker.stop()
+
+    procs = [p for g in snaps[0].adj_groups for p in g.processes]
+    assert len(procs) == 1
+    # 23195 매칭 라인 4개: 429,548 / 429,548 / 603,854 / 603,854
+    # 3번째 = 603,854
+    assert procs[0].memory_kb == 603854, f"23195 추출 오류: {procs[0].memory_kb}"
+
+
+def test_fast_polling_falls_back_to_last_when_under_3_matches():
+    """매칭 라인 2개일 때 마지막 라인 사용."""
+    from core.fast_polling_worker import FastPollingWorker
+    response = (
+        "    50,000K: com.x (pid 100)\n"
+        "        60,000K: com.x (pid 100)\n"
+    )
+    adb = _FixedAdb(response)
+    worker = FastPollingWorker(adb, "dev", [("com.x", 100)], interval_sec=1)
+    snaps = []
+    worker.snapshot_ready.connect(lambda s: snaps.append(s))
+    worker.start()
+    _wait_for(lambda: len(snaps) >= 1, timeout=2.0)
+    worker.stop()
+    procs = [p for g in snaps[0].adj_groups for p in g.processes]
+    assert procs[0].memory_kb == 60000   # 마지막 라인
+
+
+def test_fast_polling_emits_error_when_no_match():
+    from core.fast_polling_worker import FastPollingWorker
+    adb = _FixedAdb("    99,999K: other.pkg (pid 999)\n")
+    worker = FastPollingWorker(adb, "dev", [("com.x", 100)], interval_sec=1)
+    errors = []
+    worker.error_occurred.connect(lambda m: errors.append(m))
+    worker.start()
+    _wait_for(lambda: len(errors) >= 1, timeout=2.0)
+    worker.stop()
+    assert any("com.x" in e and "100" in e for e in errors), f"errors: {errors}"
+
+
+# ── AdbManager subprocess 추적 / cancel_all ──────────────────────────────────
+
+def test_adb_cancel_all_kills_pending_subprocesses():
+    """_procs 에 들어있는 Popen-like 객체들의 kill() 이 호출되어야."""
+    from core.adb_manager import AdbManager
+
+    killed = []
+    class FakeProc:
+        def kill(self):
+            killed.append(self)
+
+    mgr = AdbManager.__new__(AdbManager)   # __init__ 우회
+    import threading as _t
+    mgr._procs_lock = _t.Lock()
+    mgr._procs = {FakeProc(), FakeProc(), FakeProc()}
+    mgr.cancel_all()
+    assert len(killed) == 3
+
+
+def test_polling_worker_stop_calls_cancel_all():
+    """PollingWorker.stop() 이 adb.cancel_all() 을 호출하는지."""
+    from core.polling_worker import PollingWorker
+
+    cancel_calls = []
+    class _CancelMock:
+        def run_meminfo(self, *a, **k):
+            time.sleep(0.05)
+            return ""
+        def cancel_all(self):
+            cancel_calls.append(True)
+
+    worker = PollingWorker(_CancelMock(), lambda *_: None, "dev", interval_sec=1)
+    worker.start()
+    time.sleep(0.1)
+    worker.stop()
+    assert cancel_calls, "cancel_all 미호출"
+
+
+# ── 메인 윈도우 상태바 (Step 1 검증) ─────────────────────────────────────────
+
+def test_main_window_shows_status_message_when_fast_open(sample_snapshot):
+    from ui.main_window import MainWindow
+    w = MainWindow()
+    w.selection_view.update_data(sample_snapshot)
+    proc = sample_snapshot.adj_groups[0].processes[0]
+    w.selection_view.fast_chart_requested.emit([(proc.package_name, proc.pid)])
+    _app.processEvents()
+    msg = w.status_bar.currentMessage()
+    assert "메인 dumpsys 폴링 중단됨" in msg, f"상태바: {msg!r}"
+    w._fast_win.close()
+    _app.processEvents()
+
+
+def test_main_window_clears_status_after_fast_close(sample_snapshot):
+    from ui.main_window import MainWindow
+    w = MainWindow()
+    w.selection_view.update_data(sample_snapshot)
+    proc = sample_snapshot.adj_groups[0].processes[0]
+    w.selection_view.fast_chart_requested.emit([(proc.package_name, proc.pid)])
+    _app.processEvents()
+    assert w._fast_win is not None
+    w._fast_win.close()
+    _app.processEvents()
+    msg = w.status_bar.currentMessage()
+    assert "중단됨" not in msg, f"상태바 미클리어: {msg!r}"

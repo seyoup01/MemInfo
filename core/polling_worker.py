@@ -132,7 +132,14 @@ class PollingWorker(QThread):
 
     def stop(self) -> None:
         self._stop_flag.set()
-        self.wait(2000)   # 최대 2초 대기
+        # 메인 폴링이 dumpsys subprocess 에 블록되어 있으면 wait() 가 무한정 대기.
+        # adb 가 cancel_all() 을 지원하면 진행 중 subprocess 를 즉시 종료하여 깨움.
+        if hasattr(self._adb, "cancel_all"):
+            try:
+                self._adb.cancel_all()
+            except Exception:
+                pass
+        self.wait(3000)
 
     def set_interval(self, sec: int) -> None:
         """실행 중에도 주기 변경 가능 (다음 사이클부터 적용)."""

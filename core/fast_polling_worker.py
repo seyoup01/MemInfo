@@ -121,18 +121,41 @@ class FastPollingWorker(QThread):
         return results
 
     def _fetch_one(self, pkg: str, pid: int) -> tuple[str, int, int] | None:
-        raw = self._adb.run_meminfo_for_pid(self._serial, pid)
-        parsed = parse_grep_response(raw)
-        if parsed is None:
-            # 진단: 빈 응답인지 / 응답은 왔는데 파싱 불가인지 구별 가능한 메시지
+        """패키지명으로 grep 후 (pkg, pid) 정확히 매칭되는 라인만 사용.
+
+        한 번의 `grep "<pkg>"` 응답에 같은 패키지명을 가진 다른 PID,
+        또는 substring 매칭되는 다른 프로세스(`:privileged_process0` 등)가
+        섞여 있을 수 있으므로 엄격하게 필터링한다.
+
+        매칭 라인 중 3번째(사용자 명시 — OOM ADJ 헤더) 우선, 폴백은 마지막.
+        """
+        raw = self._adb.run_meminfo_for_package(self._serial, pkg)
+
+        # 예) "    25,820K: com.nhn.android.search (pid 23280)"
+        #     "    25,820K: com.nhn.android.search (pid 23280 / activities)"
+        # 제외) "...:privileged_process0 (pid ...)"  / 다른 PID
+        exact_re = re.compile(
+            r"^\s*(\d[\d,]*)K:\s+"
+            + re.escape(pkg)
+            + r"\s+\(pid\s+" + str(pid) + r"(?:\s*/[^)]*)?\)\s*$"
+        )
+        matched_mem: list[int] = []
+        for line in raw.splitlines():
+            m = exact_re.match(line)
+            if m:
+                matched_mem.append(int(m.group(1).replace(",", "")))
+
+        if not matched_mem:
             snippet = (
                 raw[:160].replace("\n", " | ").strip()
                 if raw else "<empty response>"
             )
-            self.error_occurred.emit(f"PID {pid} 파싱 실패: {snippet}")
+            self.error_occurred.emit(
+                f"{pkg} (PID {pid}) 매칭 실패: {snippet}"
+            )
             return None
-        # pkg 파라미터를 우선 보존 (grep 결과의 package 가 잘려있을 수 있음)
-        _, _, mem_kb = parsed
+
+        mem_kb = matched_mem[2] if len(matched_mem) >= 3 else matched_mem[-1]
         return (pkg, pid, mem_kb)
 
     def _build_snapshot(self, results: list[tuple[str, int, int]]) -> MemInfoSnapshot:

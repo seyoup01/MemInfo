@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
@@ -47,22 +48,47 @@ class AdbManager:
     TIMEOUT_SHORT = 5    # devices/getprop/echo 등 즉답 명령용
 
     def __init__(self):
-        self._adb = resolve_adb_path()
+        self._adb         = resolve_adb_path()
+        self._procs_lock  = threading.Lock()
+        self._procs: set  = set()    # 진행 중 Popen 추적 (외부 cancel 지원)
 
     def _run(self, *args, timeout: int | None = None) -> str:
-        """ADB 명령 실행. 실패/타임아웃 시 빈 문자열 반환."""
+        """ADB 명령 실행. Popen 기반으로 외부 cancel_all() 호환.
+        실패/타임아웃 시 빈 문자열 반환."""
+        timeout = timeout if timeout is not None else self.TIMEOUT_SHORT
+        proc = None
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 [self._adb, *args],
-                capture_output=True,
-                text=True,
-                timeout=timeout if timeout is not None else self.TIMEOUT_SHORT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            return result.stdout
-        except subprocess.TimeoutExpired:
-            return ""
+            with self._procs_lock:
+                self._procs.add(proc)
+            try:
+                stdout, _ = proc.communicate(timeout=timeout)
+                return stdout or ""
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.communicate(timeout=2)
+                except Exception:
+                    pass
+                return ""
         except Exception:
             return ""
+        finally:
+            if proc is not None:
+                with self._procs_lock:
+                    self._procs.discard(proc)
+
+    def cancel_all(self) -> None:
+        """진행 중인 모든 subprocess 강제 종료. 워커 중단 시 호출."""
+        with self._procs_lock:
+            for p in list(self._procs):
+                try:
+                    p.kill()
+                except Exception:
+                    pass
 
     def get_devices(self) -> list[AdbDevice]:
         """연결된 기기 목록 반환. 각 기기의 모델명도 조회."""
@@ -117,6 +143,20 @@ class AdbManager:
         for pattern in (
             f'dumpsys meminfo | grep "pid {pid}"',
             f"dumpsys meminfo | grep 'pid {pid}'",
+        ):
+            raw = self._run("-s", serial, "shell", pattern, timeout=self.TIMEOUT)
+            if raw and raw.strip():
+                return raw
+        return ""
+
+    def run_meminfo_for_package(self, serial: str, package: str) -> str:
+        """dumpsys meminfo | grep "<package>" 실행. 동일 패키지명을 가진
+        여러 PID/변형이 함께 포함될 수 있으므로 호출자가 필터링해야 한다.
+        큰따옴표 → 작은따옴표 폴백.
+        """
+        for pattern in (
+            f'dumpsys meminfo | grep "{package}"',
+            f"dumpsys meminfo | grep '{package}'",
         ):
             raw = self._run("-s", serial, "shell", pattern, timeout=self.TIMEOUT)
             if raw and raw.strip():
@@ -196,6 +236,22 @@ class MockAdbManager:
         while len(lines) < 4:
             lines.append(lines[-1])
         return "\n".join(lines[:4]) + "\n"
+
+    def run_meminfo_for_package(self, serial: str, package: str) -> str:
+        """전체 meminfo 에서 해당 패키지명을 포함하는 라인만 추출 (grep 시뮬레이션)."""
+        try:
+            with open(self._FIXTURE, encoding="utf-8") as f:
+                raw = f.read()
+        except FileNotFoundError:
+            return ""
+        lines = [l for l in raw.splitlines() if package in l]
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n"
+
+    def cancel_all(self) -> None:
+        """Mock — 호출 카운트 검증용. Real subprocess 없음."""
+        pass
 
     def test_connection(self, serial: str) -> bool:
         return True

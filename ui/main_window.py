@@ -310,7 +310,12 @@ class MainWindow(QMainWindow):
             return
 
         self._fast_was_running = bool(self._worker and self._worker.isRunning())
-        self._stop_worker()                # 전체 dumpsys 폴링 중단
+        self._stop_worker()    # 내부에서 adb.cancel_all() 로 subprocess 까지 정리
+
+        # Step 1 검증: 메인 폴링이 중단되었음을 상태바에 영구 표시
+        self.status_bar.showMessage(
+            "메인 dumpsys 폴링 중단됨 — 차트 빠르게 Update 진행 중", 0
+        )
 
         serial = self.toolbar.current_serial()
         self._fast_win = FastUpdateWindow(self._adb, serial, pairs, self)
@@ -320,6 +325,7 @@ class MainWindow(QMainWindow):
     def _on_fast_window_closed(self):
         """fast 윈도우가 닫혔을 때 — 이전에 폴링 중이었다면 재개."""
         self._fast_win = None
+        self.status_bar.clearMessage()
         if self._fast_was_running:
             self._fast_was_running = False
             self._start_worker()
