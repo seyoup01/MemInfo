@@ -1,0 +1,8 @@
+{
+  "packages": [
+    "com.android.systemui",
+    "com.i89trillion.strategy.rising",
+    "com.nhn.android.search",
+    "com.sec.android.app.launcher"
+  ]
+}

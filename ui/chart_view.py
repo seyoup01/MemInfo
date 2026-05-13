@@ -120,7 +120,9 @@ class ChartView(QWidget):
                     pen=pg.mkPen(color=color, width=2), name=pkg,
                 )
                 label = pg.TextItem(
-                    text=pkg.split(".")[-1], color=color, anchor=(0, 0.5)
+                    text=pkg,            # Full 패키지명 (식별성 우선)
+                    color=color,
+                    anchor=(0, 0),       # top-left 모서리가 데이터 포인트 → 텍스트는 점의 아래/우측에 렌더
                 )
                 label.setVisible(labels_visible)
                 self._plot.addItem(label)

@@ -494,6 +494,49 @@ def test_chart_sum_label_updates_with_data(sample_snapshot):
     assert f"{expected:,}" in text, f"합계 라벨: {text}"
 
 
+# ── Chart 곡선 끝 라벨: Full 패키지명 + 아래쪽 위치 ──────────────────────────
+
+def test_chart_endpoint_label_uses_full_package_name():
+    """곡선 끝 라벨은 Full 패키지명을 표시해야 한다 (com.kakao.talk 등)."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+
+    label_talk = chart._labels["com.kakao.talk"].textItem.toPlainText()
+    label_sysui = chart._labels["com.android.systemui"].textItem.toPlainText()
+    assert label_talk == "com.kakao.talk", f"라벨 텍스트: {label_talk!r}"
+    assert label_sysui == "com.android.systemui", f"라벨 텍스트: {label_sysui!r}"
+
+
+def test_chart_endpoint_label_anchored_top_left():
+    """라벨 앵커가 (0, 0) 이어서 데이터 포인트 아래쪽에 텍스트가 렌더링."""
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk"])
+    anchor = chart._labels["com.kakao.talk"].anchor
+    assert (anchor.x(), anchor.y()) == (0, 0), f"anchor: ({anchor.x()}, {anchor.y()})"
+
+
+def test_chart_top_legend_still_uses_short_name():
+    """상단 범례(legend)는 압축된 마지막 세그먼트를 그대로 유지해야 한다."""
+    from PyQt6.QtWidgets import QLabel
+    from ui.chart_view import ChartView
+    chart = ChartView()
+    chart.set_packages(["com.kakao.talk", "com.android.systemui"])
+
+    legend_texts = []
+    for i in range(chart._legend_layout.count()):
+        w = chart._legend_layout.itemAt(i).widget()
+        if isinstance(w, QLabel) and w.text() != "●":
+            legend_texts.append(w.text())
+
+    assert "talk" in legend_texts, f"legend: {legend_texts}"
+    assert "systemui" in legend_texts, f"legend: {legend_texts}"
+    # Full 패키지명은 legend 에 나타나지 않아야 함
+    assert "com.kakao.talk" not in legend_texts
+    assert "com.android.systemui" not in legend_texts
+
+
 # ── MainWindow 연결 ──────────────────────────────────────────────────────────
 
 def test_main_window_has_chart_view():
