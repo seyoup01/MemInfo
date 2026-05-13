@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QTabWidget,
 )
 
-from core.adb_manager import MockAdbManager, ReconnectWorker
+from core.adb_manager import AdbManager, MockAdbManager, ReconnectWorker
 from core.alert_manager import AlertManager
 from core.history_manager import HistoryManager
 from core.meminfo_parser import parse as meminfo_parse
@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings          = Settings()
-        self._adb               = MockAdbManager()
+        self._adb, self._adb_mock = self._create_adb_manager()
         self._worker: PollingWorker | None           = None
         self._reconnect: ReconnectWorker | None      = None
         self._collection_num    = 0
@@ -45,6 +45,17 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._connect_signals()
         self._refresh_devices()
+
+    # ── ADB 매니저 초기화 ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _create_adb_manager() -> tuple:
+        """ADB 실행 파일이 있으면 AdbManager, 없으면 MockAdbManager 반환."""
+        try:
+            mgr = AdbManager()
+            return mgr, False   # (manager, is_mock)
+        except FileNotFoundError:
+            return MockAdbManager(), True
 
     # ── UI 구성 ───────────────────────────────────────────────────────────────
 
@@ -126,6 +137,13 @@ class MainWindow(QMainWindow):
         act_clear_hist.triggered.connect(self._clear_history)
         set_menu.addAction(act_clear_hist)
 
+        set_menu.addSeparator()
+
+        act_reload_adb = QAction("ADB 재탐색", self)
+        act_reload_adb.setToolTip("ADB 설치 후 재탐색하여 실제 기기 연결")
+        act_reload_adb.triggered.connect(self._reload_adb)
+        set_menu.addAction(act_reload_adb)
+
     def _wrap_toolbar(self):
         from PyQt6.QtWidgets import QToolBar
         qt_toolbar = QToolBar("메인 툴바", self)
@@ -147,6 +165,14 @@ class MainWindow(QMainWindow):
     # ── 슬롯 ─────────────────────────────────────────────────────────────────
 
     def _refresh_devices(self):
+        # ADB 없이 실행 중이면 경고 표시
+        if self._adb_mock:
+            self.status_bar.showMessage(
+                "⚠ ADB를 찾을 수 없습니다. Mock 모드로 실행 중 — "
+                "Android SDK Platform-Tools를 설치하고 PATH에 추가하세요.",
+                0,  # 0 = 영구 표시
+            )
+
         devices = self._adb.get_devices()
         self.toolbar.populate_devices(devices)
         last = self._settings.get("last_device")
@@ -156,7 +182,7 @@ class MainWindow(QMainWindow):
                     self.toolbar.device_combo.setCurrentIndex(i)
                     break
         if devices:
-            self.status_bar.update_status(connected=True)
+            self.status_bar.update_status(connected=not self._adb_mock)
 
     def _on_device_selected(self, serial: str):
         ok = self._adb.test_connection(serial)
@@ -265,6 +291,23 @@ class MainWindow(QMainWindow):
                 break
 
     # ── 메뉴 액션 핸들러 ─────────────────────────────────────────────────────
+
+    def _reload_adb(self):
+        """ADB를 재탐색하여 실제 기기 연결로 전환."""
+        self._stop_worker()
+        self._adb, self._adb_mock = self._create_adb_manager()
+        if self._adb_mock:
+            QMessageBox.warning(
+                self, "ADB 없음",
+                "ADB를 찾을 수 없습니다.\n\n"
+                "Android SDK Platform-Tools를 설치하고\n"
+                "PATH에 추가한 뒤 다시 시도하세요.\n\n"
+                "다운로드: https://developer.android.com/tools/releases/platform-tools"
+            )
+        else:
+            self.status_bar.clearMessage()
+            QMessageBox.information(self, "ADB 연결", "ADB를 찾았습니다. 기기 목록을 새로고침합니다.")
+        self._refresh_devices()
 
     def _export_current_csv(self):
         if not hasattr(self, '_last_snap') or self._last_snap is None:
